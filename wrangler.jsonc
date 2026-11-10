@@ -1,0 +1,16 @@
+{
+  "name": "imrc-panel-dns",
+  "main": "worker.js",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./public",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "imrc-db",
+      "database_id": "PUT_DATABASE_ID_HERE"
+    }
+  ]
+}

@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="robots" content="noindex,nofollow"/>
+<title>IMRC • پنل مدیریت</title>
+<style>
+:root{--bg:#0b0d14;--card:#141826;--line:#232a40;--tx:#e8ecf7;--mut:#8a93ad;--pink:#ff2e88;--lime:#b6ff3c;--cy:#3cd5ff;--red:#ff5470}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font-family:system-ui,"Vazirmatn",Tahoma,sans-serif;padding:14px;max-width:900px;margin-inline:auto}
+h1{font-size:18px;margin:6px 0 14px;display:flex;justify-content:space-between;align-items:center}
+h2{font-size:14px;margin:22px 0 8px;color:var(--mut)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px}
+.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+@media(min-width:640px){.grid{grid-template-columns:repeat(4,1fr)}}
+.stat b{display:block;font-size:26px;color:var(--lime)}
+.stat span{font-size:12px;color:var(--mut)}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--mut);margin-inline-end:6px}
+.dot.on{background:var(--lime);box-shadow:0 0 8px var(--lime)}
+input,button{font:inherit;border-radius:10px;border:1px solid var(--line);background:#0e1220;color:var(--tx);padding:10px 12px}
+button{background:var(--pink);border:0;color:#fff;cursor:pointer}
+.login{max-width:340px;margin:18vh auto;text-align:center}
+.login input{width:100%;margin:10px 0}
+.err{color:var(--red);font-size:13px;min-height:18px}
+.bars{display:flex;align-items:flex-end;gap:5px;height:110px}
+.bars div{flex:1;text-align:center;font-size:10px;color:var(--mut);display:flex;flex-direction:column;justify-content:flex-end;height:100%}
+.bars i{display:block;background:linear-gradient(var(--pink),#7a2bff);border-radius:4px 4px 0 0;min-height:2px}
+.bars em{font-style:normal;color:var(--tx);font-size:11px}
+.row{display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px}
+.row:last-child{border:0}
+.sub{color:var(--mut);font-size:11px;margin-top:2px;direction:ltr;text-align:right}
+.chips span{display:inline-block;background:#0e1220;border:1px solid var(--line);border-radius:20px;padding:3px 10px;margin:3px 0 0 6px;font-size:12px}
+.chips b{color:var(--cy)}
+.num{color:var(--lime);white-space:nowrap}
+.ev{font-size:13px;padding:7px 0;border-bottom:1px solid var(--line)}
+.ev time{color:var(--mut);font-size:11px;display:block}
+.hide{display:none}
+</style>
+</head>
+<body>
+<div id="login" class="login card">
+  <h1 style="justify-content:center">🔐 پنل مدیریت IMRC</h1>
+  <input id="pw" type="password" placeholder="رمز مدیریت" autocomplete="current-password"/>
+  <button onclick="doLogin()" style="width:100%">ورود</button>
+  <div class="err" id="err"></div>
+</div>
+
+<div id="app" class="hide">
+  <h1><span>📊 پنل مدیریت IMRC</span><button onclick="logout()" style="padding:6px 12px;font-size:12px;background:#232a40">خروج</button></h1>
+  <div class="grid">
+    <div class="card stat"><b id="sOnline">0</b><span><i class="dot on"></i>آنلاین الان</span></div>
+    <div class="card stat"><b id="sConfToday">0</b><span>کانفیگ امروز</span></div>
+    <div class="card stat"><b id="sConf">0</b><span>کل کانفیگ‌ها</span></div>
+    <div class="card stat"><b id="sVis">0</b><span>کل کاربران</span></div>
+    <div class="card stat"><b id="sVisToday">0</b><span>کاربر فعال امروز</span></div>
+    <div class="card stat"><b id="sVisits">0</b><span>کل بازدیدها</span></div>
+    <div class="card stat"><b id="sAct">0</b><span>کل فعالیت‌ها</span></div>
+    <div class="card stat"><b id="sAvg">0</b><span>کانفیگ به‌ازای کاربر</span></div>
+  </div>
+
+  <h2>کانفیگ ساخته‌شده در ۱۴ روز اخیر</h2>
+  <div class="card"><div class="bars" id="bars"></div></div>
+
+  <h2>پرکاربردترین کشورها و حالت‌ها</h2>
+  <div class="card chips" id="chips"></div>
+
+  <h2>کاربران (جدیدترین فعالیت اول)</h2>
+  <div class="card" id="users"></div>
+
+  <h2>فعالیت‌های اخیر</h2>
+  <div class="card" id="events"></div>
+  <p style="color:var(--mut);font-size:11px;text-align:center">هر ۱۵ ثانیه خودکار به‌روز می‌شود • <span id="upd"></span></p>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fa=n=>Number(n||0).toLocaleString("fa-IR");
+let pw=sessionStorage.getItem("imrc_admin")||"",timer;
+
+const TAB={main:"اصلی",codm:"کالاف",stats:"آمار",settings:"تنظیمات",tools:"ابزارها"};
+function evText(e){
+  if(e.type==="visit")return "🟢 وارد پنل شد";
+  if(e.type==="config")return `📥 کانفیگ ساخت: <b>${esc(e.name)}</b> • ${esc(e.region)} • ${esc(e.mode)}/${esc(e.role)}`;
+  const d=esc(e.detail),n=e.name;
+  if(n==="switchTab")return `📂 رفت به تب «${esc(TAB[e.detail]||e.detail)}»`;
+  if(n==="applyPreset")return `⚡ پریست «${d}» را زد`;
+  if(n==="setMode")return `🎮 حالت بازی: ${d}`;
+  if(n==="setRole")return `🎭 نقش: ${d}`;
+  if(n==="codmOptimize")return "🎯 بهینه‌سازی یک‌کلیکی کالاف";
+  return `✨ ${esc(n)} ${d}`;
+}
+const ago=(ms,now)=>{const s=Math.max(0,Math.round((now-ms)/1000));if(s<60)return fa(s)+" ثانیه پیش";if(s<3600)return fa(Math.round(s/60))+" دقیقه پیش";if(s<86400)return fa(Math.round(s/3600))+" ساعت پیش";return fa(Math.round(s/86400))+" روز پیش"};
+const clock=ms=>new Date(ms).toLocaleString("fa-IR",{hour:"2-digit",minute:"2-digit",day:"numeric",month:"short"});
+
+async function load(){
+  let r;
+  try{r=await fetch("/api/admin/stats",{headers:{Authorization:"Bearer "+pw}})}catch(e){$("err").textContent="خطا در اتصال";return false}
+  if(r.status===401){$("err").textContent="رمز اشتباه است";return false}
+  const d=await r.json();
+  if(!r.ok){$("err").textContent=d.error||"خطای سرور";return false}
+  render(d);return true;
+}
+function render(d){
+  const t=d.totals,now=d.now;
+  $("sOnline").textContent=fa(d.online);$("sConfToday").textContent=fa(d.today.c);
+  $("sConf").textContent=fa(t.c);$("sVis").textContent=fa(t.v);$("sVisToday").textContent=fa(d.today.v);
+  $("sVisits").textContent=fa(t.vis);$("sAct").textContent=fa(t.a);
+  $("sAvg").textContent=t.v?(t.c/t.v).toLocaleString("fa-IR",{maximumFractionDigits:1}):"۰";
+
+  const today=Math.floor((d.dayStart+d.tehran)/86400000),map={};
+  d.daily.forEach(x=>map[x.d]=x.c);
+  const days=[];for(let i=13;i>=0;i--)days.push(today-i);
+  const max=Math.max(1,...days.map(x=>map[x]||0));
+  $("bars").innerHTML=days.map(x=>{const c=map[x]||0,lab=new Date(x*86400000).toLocaleDateString("fa-IR",{day:"numeric",timeZone:"UTC"});
+    return `<div><em>${c?fa(c):""}</em><i style="height:${Math.round(c/max*80)}px"></i>${lab}</div>`}).join("");
+
+  const chip=(a,l)=>a.map(x=>`<span>${l} ${esc(x.k)} <b>${fa(x.c)}</b></span>`).join("");
+  $("chips").innerHTML=(chip(d.regions,"🌍")+chip(d.modes,"🎮"))||'<span style="color:var(--mut)">هنوز داده‌ای نیست</span>';
+
+  $("users").innerHTML=d.visitors.map(v=>{
+    const on=now-v.last_seen<90000;
+    return `<div class="row"><div><i class="dot ${on?"on":""}"></i><b>${esc(v.last_name||"بدون کانفیگ")}</b>
+      <div class="sub">${esc(v.country||"?")}${v.city?" • "+esc(v.city):""} • ${esc(v.device)} • #${esc(v.vid.slice(0,6))}</div></div>
+      <div style="text-align:left"><span class="num">${fa(v.configs)} کانفیگ</span>
+      <div class="sub" style="direction:rtl;text-align:left">${fa(v.actions)} فعالیت • ${on?"آنلاین":ago(v.last_seen,now)}</div></div></div>`}).join("")||'<span style="color:var(--mut)">هنوز کاربری نیست</span>';
+
+  $("events").innerHTML=d.events.map(e=>`<div class="ev">${evText(e)}<time>${clock(e.ts)} • #${esc(e.vid.slice(0,6))}</time></div>`).join("")||'<span style="color:var(--mut)">هنوز فعالیتی نیست</span>';
+  $("upd").textContent="آخرین به‌روزرسانی: "+new Date().toLocaleTimeString("fa-IR");
+}
+async function start(){
+  $("login").classList.add("hide");$("app").classList.remove("hide");
+  clearInterval(timer);timer=setInterval(()=>{if(!document.hidden)load()},15000);
+}
+async function doLogin(){
+  pw=$("pw").value;$("err").textContent="";
+  if(await load()){sessionStorage.setItem("imrc_admin",pw);start()}
+}
+function logout(){sessionStorage.removeItem("imrc_admin");location.reload()}
+$("pw").addEventListener("keydown",e=>{if(e.key==="Enter")doLogin()});
+if(pw)load().then(ok=>{if(ok)start();else sessionStorage.removeItem("imrc_admin")});
+</script>
+</body>
+</html>

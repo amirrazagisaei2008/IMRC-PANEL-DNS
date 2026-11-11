@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="robots" content="noindex,nofollow"/>
+<meta name="theme-color" content="#0a0f0a"/>
+<title>IMRC • ورود</title>
+<style>
+:root{--bg:#0a0f0a;--card:#121a12;--line:#22331f;--tx:#eaf5e6;--mut:#8fa68a;--lime:#b6ff3c;--blue:#2aabee;--red:#ff5470}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:radial-gradient(circle at 50% 0,#16260f,var(--bg) 60%);color:var(--tx);font-family:system-ui,"Vazirmatn",Tahoma,sans-serif;display:flex;align-items:center;justify-content:center;padding:16px}
+.card{width:100%;max-width:380px;background:var(--card);border:1px solid var(--line);border-radius:20px;padding:26px 20px;text-align:center}
+.logo{font-size:44px}
+h1{margin:6px 0 4px;font-size:20px}
+p{color:var(--mut);font-size:13px;line-height:1.9;margin:6px 0}
+button{width:100%;margin-top:16px;padding:14px;border:0;border-radius:12px;background:var(--blue);color:#fff;font:inherit;font-size:16px;cursor:pointer}
+button:disabled{opacity:.6}
+a.link{display:none;margin-top:12px;color:var(--blue);font-size:14px}
+#msg{min-height:22px;margin-top:14px;font-size:13px;color:var(--lime)}
+#msg.err{color:var(--red)}
+.note{font-size:11px;opacity:.7;margin-top:18px}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">🎯</div>
+  <h1>IMRC CODM Pro</h1>
+  <p>برای ورود به پنل، حساب تلگرامت رو تأیید کن.</p>
+  <button id="btn" onclick="startLogin()">✈️ ورود با تلگرام</button>
+  <a id="tgLink" class="link" href="#" target="_blank" rel="noopener">اگه تلگرام باز نشد، اینجا بزن</a>
+  <div id="join" style="display:none">
+    <p style="color:var(--tx)">برای استفاده از پنل باید عضو کانال تلگرام ما باشی.</p>
+    <a class="link" id="joinLink" href="https://t.me/IMRC_Panel" target="_blank" rel="noopener" style="display:inline-block;margin-top:6px">📢 عضویت در کانال @IMRC_Panel</a>
+    <button onclick="checkJoin()" style="background:#2e7d32">✅ عضو شدم، بررسی کن</button>
+  </div>
+  <div id="msg"></div>
+  <p class="note">با ورود، نام و یوزرنیم تلگرامت برای آمار استفاده ثبت می‌شود.</p>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+let timer=null,busy=false;
+function say(t,err){$("msg").textContent=t;$("msg").className=err?"err":""}
+function stop(){clearInterval(timer);timer=null}
+
+async function check(){
+  const t=sessionStorage.getItem("imrc_tok");
+  if(!t||busy)return;
+  busy=true;
+  try{
+    const r=await fetch("/api/auth/check?token="+encodeURIComponent(t),{credentials:"same-origin",cache:"no-store"});
+    const d=await r.json();
+    if(d.status==="ok"){stop();sessionStorage.removeItem("imrc_tok");say("✅ وارد شدی، در حال انتقال…");location.replace("/");return}
+    if(d.status==="banned"){stop();sessionStorage.removeItem("imrc_tok");say("⛔ حساب تو مسدود شده و امکان ورود نداری.",true);$("tgLink").style.display="none";busy=false;return}
+    if(d.status==="expired"){stop();sessionStorage.removeItem("imrc_tok");say("لینک ورود منقضی شد. دوباره امتحان کن.",true);$("btn").disabled=false;$("tgLink").style.display="none"}
+  }catch(e){}
+  busy=false;
+}
+function poll(){stop();timer=setInterval(check,2000);check()}
+
+async function startLogin(){
+  $("btn").disabled=true;say("در حال آماده‌سازی…");
+  try{
+    const r=await fetch("/api/auth/start",{method:"POST",credentials:"same-origin"});
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.error||"خطا");
+    sessionStorage.setItem("imrc_tok",d.token);
+    $("tgLink").href=d.url;$("tgLink").style.display="inline-block";
+    say("تلگرام رو باز کن، Start رو بزن و به همین صفحه برگرد.");
+    poll();
+    location.href=d.url;
+  }catch(e){say(e.message||"خطا در اتصال",true);$("btn").disabled=false}
+}
+async function checkJoin(){
+  say("در حال بررسی عضویت…");
+  try{
+    const r=await fetch("/api/member/check",{credentials:"same-origin",cache:"no-store"});
+    if(r.status===401){$("join").style.display="none";$("btn").style.display="block";$("btn").disabled=false;say("اول با تلگرام وارد شو.",true);return}
+    const d=await r.json();
+    if(d.ok){say("✅ عضویت تأیید شد، در حال انتقال…");location.replace("/")}
+    else say("هنوز عضو کانال نیستی. اول عضو شو و دوباره بزن.",true);
+  }catch(e){say("خطا در اتصال",true)}
+}
+if(new URLSearchParams(location.search).get("join")==="1"){
+  $("join").style.display="block";$("btn").style.display="none";
+}
+document.addEventListener("visibilitychange",()=>{if(!document.hidden)check()});
+if(sessionStorage.getItem("imrc_tok")){$("btn").disabled=true;say("منتظر تأیید تلگرام…");poll()}
+</script>
+</body>
+</html>

@@ -252,7 +252,9 @@ async function verifyLogin(env, db, token, from, chatId) {
 
 const PENDING_MS = 86400000; // انتخاب پلن/کد تا ۲۴ ساعت معتبره
 const fa = (n) => Number(n || 0).toLocaleString("fa-IR");
-const isAdmin = (env, id) => !!env.ADMIN_TG_ID && String(id) === String(env.ADMIN_TG_ID);
+// ADMIN_TG_ID را trim می‌کنیم: فاصله یا خط جدید بعد از paste در secret باعث می‌شد ادمین شناخته نشه
+const adminTgId = (env) => String(env.ADMIN_TG_ID ?? "").trim();
+const isAdmin = (env, id) => !!adminTgId(env) && String(id) === adminTgId(env);
 const MAIN_KB = {
   inline_keyboard: [
     [{ text: "💳 خرید اشتراک", callback_data: "menu:plans" }],
@@ -324,6 +326,12 @@ async function handleText(env, db, msg, text) {
   m = text.match(/^\/code(?:\s+(\S+))?$/i);
   if (m) return applyCode(env, db, chatId, tgId, m[1] || "");
   if (/^\/support(\s|$)/.test(text)) return reply(SUPPORT_HELP);
+  // /id: آی‌دی عددی تلگرام خودت رو نشون می‌ده (برای تنظیم ADMIN_TG_ID)
+  if (/^\/(id|myid)(@\S+)?(\s|$)/i.test(text)) {
+    return reply(`🆔 آی‌دی عددی تو: ${tgId}\n` + (isAdmin(env, from.id)
+      ? "✅ این آی‌دی با ADMIN_TG_ID یکیه؛ تو ادمینی."
+      : "ℹ️ اگه این حساب ادمینه، این عدد رو (فقط عدد، بدون @ و فاصله) توی ADMIN_TG_ID بذار و دوباره امتحان کن."));
+  }
   if (!text || text.startsWith("/")) return reply("برای شروع /start رو بفرست. 👇", { reply_markup: MAIN_KB });
   if (isAdmin(env, from.id)) return reply("برای پاسخ به یک تیکت، روی اعلان همون تیکت Reply کن یا از پنل استفاده کن.");
   return supportMessage(env, db, msg, text);

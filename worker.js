@@ -83,6 +83,20 @@ function getDB(env) {
         env.DB.prepare("CREATE TABLE IF NOT EXISTS admin_tokens(token TEXT PRIMARY KEY, created INTEGER, verified INTEGER DEFAULT 0)"),
         env.DB.prepare("CREATE TABLE IF NOT EXISTS admin_sessions(sid TEXT PRIMARY KEY, created INTEGER)"),
         env.DB.prepare("CREATE TABLE IF NOT EXISTS auth_fails(k TEXT PRIMARY KEY, fails INTEGER, first INTEGER, locked_until INTEGER)"),
+        env.DB.prepare("CREATE TABLE IF NOT EXISTS reminders(tg_id TEXT PRIMARY KEY, until INTEGER)"),
+        env.DB.prepare("CREATE TABLE IF NOT EXISTS cap_alerts(tg_id TEXT, period_start INTEGER, PRIMARY KEY(tg_id, period_start))"),
+        env.DB.prepare(`CREATE TABLE IF NOT EXISTS tickets(
+          id INTEGER PRIMARY KEY AUTOINCREMENT, tg_id TEXT, name TEXT, username TEXT,
+          status TEXT DEFAULT 'open', created INTEGER, updated INTEGER)`),
+        env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tickets_tg ON tickets(tg_id, status)"),
+        env.DB.prepare(`CREATE TABLE IF NOT EXISTS ticket_msgs(
+          id INTEGER PRIMARY KEY AUTOINCREMENT, ticket_id INTEGER, sender TEXT, text TEXT, ts INTEGER, admin_msg_id INTEGER)`),
+        env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_ticket_msgs_t ON ticket_msgs(ticket_id)"),
+        env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_ticket_msgs_admin ON ticket_msgs(admin_msg_id)"),
+        env.DB.prepare(`CREATE TABLE IF NOT EXISTS broadcasts(
+          id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT, target TEXT, status TEXT,
+          total INTEGER, sent INTEGER DEFAULT 0, failed INTEGER DEFAULT 0, cursor TEXT DEFAULT '',
+          created INTEGER, finished INTEGER)`),
       ]);
       for (const col of ["tg_id", "tg_name", "tg_username"]) {
         try { await env.DB.prepare(`ALTER TABLE visitors ADD COLUMN ${col} TEXT`).run(); } catch (e) { /* already exists */ }
@@ -228,8 +242,10 @@ const MAIN_KB = {
   inline_keyboard: [
     [{ text: "💳 خرید اشتراک", callback_data: "menu:plans" }],
     [{ text: "🎁 دعوت دوستان", callback_data: "menu:invite" }],
+    [{ text: "🎫 پشتیبانی", callback_data: "menu:support" }],
   ],
 };
+const SUPPORT_HELP = "🎫 پیامت رو همین‌جا بنویس تا برای پشتیبانی فرستاده بشه. جوابت رو همین‌جا می‌گیری.";
 const WELCOME = "سلام 👋\n\n🔐 برای ورود به پنل، توی سایت روی «ورود با تلگرام» بزن.\n\n💳 /plans — خرید اشتراک\n🎟 /code کد — ثبت کد تخفیف\n🎁 /invite — دعوت دوستان (روز رایگان)\n🧾 بعد از پرداخت، عکس رسید رو همین‌جا بفرست.";
 
 async function tgWebhook(request, env) {
@@ -241,7 +257,7 @@ async function tgWebhook(request, env) {
 
   const cq = upd && upd.callback_query;
   if (cq && cq.from) {
-    await touchUser(db, cq.from.id).catch(() => {});
+    await touchUser(env, db, cq.from).catch(() => {});
     await handleCallback(env, db, cq).catch((e) => console.error("callback", e));
     return new Response("ok");
   }
@@ -249,7 +265,7 @@ async function tgWebhook(request, env) {
   const msg = upd && upd.message;
   if (!msg || !msg.from || !msg.chat) return new Response("ok");
   if (msg.chat.type !== "private") return new Response("ok");
-  await touchUser(db, msg.from.id).catch(() => {});
+  await touchUser(env, db, msg.from).catch(() => {});
   try {
     if (msg.photo) await handleReceipt(env, db, msg);
     else await handleText(env, db, msg, String(msg.text || "").trim());
@@ -257,13 +273,27 @@ async function tgWebhook(request, env) {
   return new Response("ok");
 }
 
-async function touchUser(db, id) {
-  await db.prepare("INSERT OR IGNORE INTO users(tg_id,created,logged) VALUES(?,?,0)").bind(String(id), Date.now()).run();
+async function touchUser(env, db, from) {
+  const r = await db.prepare("INSERT OR IGNORE INTO users(tg_id,created,logged) VALUES(?,?,0)").bind(String(from.id), Date.now()).run();
+  if (r.meta && r.meta.changes && !isAdmin(env, from.id)) {
+    const name = [from.first_name, from.last_name].filter(Boolean).join(" ");
+    await notifyAdmin(env, db, `👤 کاربر جدید در ربات: ${name || "-"}${from.username ? " (@" + from.username + ")" : ""}\n🆔 ${from.id}`);
+  }
+}
+
+// اعلان به ادمین (اگه تو تنظیمات روشن باشه)
+async function notifyAdmin(env, db, text) {
+  if (!env.ADMIN_TG_ID) return;
+  const st = await getSettings(db);
+  if (!st.admin_notify) return;
+  await tg(env, "sendMessage", { chat_id: env.ADMIN_TG_ID, text }).catch(() => {});
 }
 
 async function handleText(env, db, msg, text) {
   const chatId = msg.chat.id, from = msg.from, tgId = String(from.id);
   const reply = (t, extra = {}) => tg(env, "sendMessage", { chat_id: chatId, text: t, ...extra }).catch(() => {});
+  // ادمین روی اعلان یک تیکت Reply کنه → پاسخ به کاربر
+  if (isAdmin(env, from.id) && msg.reply_to_message && text && await adminReplyFromTelegram(env, db, msg, text)) return;
   let m = text.match(/^\/start\s+([a-f0-9]{24})$/);
   if (m) return verifyLogin(env, db, m[1], from, chatId);
   m = text.match(/^\/start\s+adm_([a-f0-9]{24})$/);
@@ -278,7 +308,10 @@ async function handleText(env, db, msg, text) {
   if (/^\/invite(\s|$)/.test(text)) return sendInvite(env, db, chatId, tgId);
   m = text.match(/^\/code(?:\s+(\S+))?$/i);
   if (m) return applyCode(env, db, chatId, tgId, m[1] || "");
-  return reply("برای شروع /start رو بفرست. 👇", { reply_markup: MAIN_KB });
+  if (/^\/support(\s|$)/.test(text)) return reply(SUPPORT_HELP);
+  if (!text || text.startsWith("/")) return reply("برای شروع /start رو بفرست. 👇", { reply_markup: MAIN_KB });
+  if (isAdmin(env, from.id)) return reply("برای پاسخ به یک تیکت، روی اعلان همون تیکت Reply کن یا از پنل استفاده کن.");
+  return supportMessage(env, db, msg, text);
 }
 
 async function handleCallback(env, db, cq) {
@@ -292,6 +325,7 @@ async function handleCallback(env, db, cq) {
   }
   if (data === "menu:plans") { await answer(); return sendPlans(env, db, chatId); }
   if (data === "menu:invite") { await answer(); return sendInvite(env, db, chatId, String(cq.from.id)); }
+  if (data === "menu:support") { await answer(); return tg(env, "sendMessage", { chat_id: chatId, text: SUPPORT_HELP }).catch(() => {}); }
   const buy = data.match(/^buy:([a-z0-9_]{1,16})$/);
   if (buy) { await answer(); return choosePlan(env, db, chatId, String(cq.from.id), buy[1]); }
   const dec = data.match(/^(rc|rj):(\d{1,12})(?::([a-z0-9_]{1,16}))?$/);
@@ -485,6 +519,8 @@ const DEFAULTS = {
   pay_text: "💳 شماره کارت: 6219 8614 9829 6879\n👤 به نام: امیر رزاقی ساعی (بانک سامان)",
   plans: "w|هفتگی|7|50000\nm|ماهانه|30|150000\nq|سه‌ماهه|90|400000",
   ref_days: "2",
+  remind_days: "3",
+  admin_notify: "1",
 };
 const PLAN_KEY = /^[a-z0-9_]{1,16}$/;
 // هر خط: کلید|نام|روز|قیمت(تومان)
@@ -521,6 +557,8 @@ async function getSettings(db) {
     buy_text: String(o.buy_text),
     pay_text: String(o.pay_text),
     ref_days: Math.min(365, Math.max(0, parseInt(o.ref_days) || 0)),
+    remind_days: Math.min(30, Math.max(0, parseInt(o.remind_days) || 0)),
+    admin_notify: o.admin_notify !== "0",
     plans,
     plans_text: plansToText(plans),
   };
@@ -621,6 +659,14 @@ function buildConfig({ region, dns, mtu, mode, role }) {
 const MODES = new Set(["ranked", "br", "mp"]);
 const ROLES = new Set(["attacker", "defender", "support"]);
 
+// وقتی کاربر به سقف می‌رسه، ادمین یک بار در هر دوره خبر می‌گیره
+async function capAlert(env, db, sess, q) {
+  const r = await db.prepare("INSERT OR IGNORE INTO cap_alerts(tg_id,period_start) VALUES(?,?)").bind(String(sess.tg_id), q.periodStart).run();
+  if (!(r.meta && r.meta.changes)) return;
+  const who = sess.name || (sess.username ? "@" + sess.username : String(sess.tg_id));
+  await notifyAdmin(env, db, `🚧 ${who} (${sess.tg_id}) به سقف ${fa(q.limit)} کانفیگ در ${PERIODS[q.period]} رسید.`);
+}
+
 async function createConfig(request, env) {
   const sess = await getSession(env, request);
   if (!sess) return json({ error: "login" }, 401);
@@ -652,7 +698,10 @@ async function createConfig(request, env) {
      SELECT ?,?,? WHERE (SELECT COUNT(*) FROM config_log WHERE tg_id=? AND ts>=?) < ?`
   ).bind(String(sess.tg_id), now, region, String(sess.tg_id), q.periodStart, q.limit).run();
   const ok = ins && ins.meta ? ins.meta.changes > 0 : false;
-  if (!ok) return json({ error: "limit", message: q.buy_text, used: q.used, limit: q.limit, period: q.period, sub: q.sub, custom: q.custom, unlock: q.unlock }, 429);
+  if (!ok) {
+    await capAlert(env, db, sess, q).catch(() => {});
+    return json({ error: "limit", message: q.buy_text, used: q.used, limit: q.limit, period: q.period, sub: q.sub, custom: q.custom, unlock: q.unlock }, 429);
+  }
 
   const vid = "tg" + String(sess.tg_id).replace(/[^0-9]/g, "");
   const ua = request.headers.get("User-Agent") || "";
@@ -947,6 +996,8 @@ async function adminSettings(request, env) {
   const payText = String(b.pay_text || "").replace(/[\u0000-\u0008]/g, "").trim().slice(0, 400) || DEFAULTS.pay_text;
   let plans;
   try { plans = parsePlans(String(b.plans || "")); } catch (e) { return json({ error: e.message }, 400); }
+  const remind = parseInt(b.remind_days);
+  if (!(remind >= 0 && remind <= 30)) return json({ error: "یادآوری باید بین ۰ تا ۳۰ روز باشه" }, 400);
   const db = await getDB(env);
   const up = (k, v) => db.prepare("INSERT INTO settings(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v").bind(k, v);
   await db.batch([
@@ -957,6 +1008,8 @@ async function adminSettings(request, env) {
     up("plans", plansToText(plans)),
     up("pay_text", payText),
     up("ref_days", String(rd)),
+    up("remind_days", String(remind)),
+    up("admin_notify", b.admin_notify ? "1" : "0"),
   ]);
   return json({ ok: true });
 }
@@ -976,8 +1029,195 @@ async function adminWebhook(request, env) {
   return json({ ok: !!r.ok, bot: me.result.username, description: r.description || "" }, r.ok ? 200 : 400);
 }
 
+/* ---------------- پشتیبانی (تیکت) ---------------- */
+const TICKET_RATE = { max: 5, win: 600000 }; // حداکثر ۵ پیام در ۱۰ دقیقه از هر کاربر
+
+async function supportMessage(env, db, msg, text) {
+  const chatId = msg.chat.id, from = msg.from, tgId = String(from.id);
+  const reply = (t) => tg(env, "sendMessage", { chat_id: chatId, text: t }).catch(() => {});
+  if (text.length > 1000) return reply("پیامت خیلی طولانیه (حداکثر ۱۰۰۰ کاراکتر).");
+  if (!env.ADMIN_TG_ID) return reply("پشتیبانی فعلاً در دسترس نیست.");
+  if (await isBanned(db, tgId)) return reply("⛔ دسترسی تو مسدود شده.");
+  const recent = await db.prepare(
+    "SELECT COUNT(*) n FROM ticket_msgs m JOIN tickets t ON t.id=m.ticket_id WHERE t.tg_id=? AND m.sender='user' AND m.ts>?"
+  ).bind(tgId, Date.now() - TICKET_RATE.win).first();
+  if (recent.n >= TICKET_RATE.max) return reply("⏳ پیام‌های زیادی فرستادی. چند دقیقه دیگه دوباره بفرست.");
+
+  const now = Date.now();
+  const name = [from.first_name, from.last_name].filter(Boolean).join(" ");
+  let t = await db.prepare("SELECT id FROM tickets WHERE tg_id=? AND status='open' ORDER BY id DESC LIMIT 1").bind(tgId).first();
+  if (!t) {
+    const r = await db.prepare("INSERT INTO tickets(tg_id,name,username,status,created,updated) VALUES(?,?,?,'open',?,?)")
+      .bind(tgId, name, from.username || "", now, now).run();
+    t = { id: r.meta.last_row_id };
+  }
+  const mr = await db.prepare("INSERT INTO ticket_msgs(ticket_id,sender,text,ts) VALUES(?,?,?,?)").bind(t.id, "user", text, now).run();
+  await db.prepare("UPDATE tickets SET updated=? WHERE id=?").bind(now, t.id).run();
+
+  const cap = `🎫 تیکت #${t.id} — ${name || "-"}${from.username ? " (@" + from.username + ")" : ""}\n🆔 ${tgId}\n\n${text}\n\nبرای پاسخ، روی همین پیام Reply کن یا از پنل پاسخ بده.`;
+  const sent = await tg(env, "sendMessage", { chat_id: env.ADMIN_TG_ID, text: cap }).catch(() => ({ ok: false }));
+  if (sent.ok) await db.prepare("UPDATE ticket_msgs SET admin_msg_id=? WHERE id=?").bind(sent.result.message_id, mr.meta.last_row_id).run();
+  return reply(`✅ پیامت برای پشتیبانی ثبت شد (تیکت #${t.id}). به‌زودی جواب می‌گیری.`);
+}
+
+// پاسخ ادمین (از پنل یا Reply تلگرام) → ارسال به کاربر
+async function ticketReply(env, db, id, text) {
+  const t = await db.prepare("SELECT id,tg_id FROM tickets WHERE id=?").bind(id).first();
+  if (!t) return { error: "تیکت پیدا نشد", status: 404 };
+  const now = Date.now();
+  await db.prepare("INSERT INTO ticket_msgs(ticket_id,sender,text,ts) VALUES(?,?,?,?)").bind(id, "admin", text, now).run();
+  await db.prepare("UPDATE tickets SET status='open', updated=? WHERE id=?").bind(now, id).run();
+  const r = await tg(env, "sendMessage", { chat_id: t.tg_id, text: `💬 پاسخ پشتیبانی (تیکت #${id}):\n\n${text}` }).catch(() => ({ ok: false }));
+  return { ok: true, delivered: !!r.ok };
+}
+
+async function adminReplyFromTelegram(env, db, msg, text) {
+  const row = await db.prepare("SELECT ticket_id FROM ticket_msgs WHERE admin_msg_id=? AND sender='user'").bind(msg.reply_to_message.message_id).first();
+  if (!row) return false;
+  const res = await ticketReply(env, db, row.ticket_id, text.slice(0, 3500));
+  await tg(env, "sendMessage", {
+    chat_id: msg.chat.id,
+    text: res.delivered ? `✅ پاسخ برای تیکت #${row.ticket_id} فرستاده شد.` : `⚠️ پاسخ ذخیره شد ولی به کاربر نرسید (احتمالاً ربات رو بلاک کرده).`,
+  }).catch(() => {});
+  return true;
+}
+
+async function adminTickets(env, url) {
+  const db = await getDB(env);
+  const status = url.searchParams.get("status") === "closed" ? "closed" : "open";
+  const r = await db.prepare(`SELECT t.id,t.tg_id,t.name,t.username,t.status,t.updated,
+      (SELECT text FROM ticket_msgs m WHERE m.ticket_id=t.id ORDER BY m.id DESC LIMIT 1) last,
+      (SELECT sender FROM ticket_msgs m WHERE m.ticket_id=t.id ORDER BY m.id DESC LIMIT 1) last_sender
+    FROM tickets t WHERE t.status=? ORDER BY t.updated DESC LIMIT 100`).bind(status).all();
+  return json({ tickets: r.results || [] });
+}
+
+async function adminTicket(request, env, url) {
+  const db = await getDB(env);
+  if (request.method === "GET") {
+    const id = parseInt(url.searchParams.get("id"));
+    if (!(id > 0)) return json({ error: "bad" }, 400);
+    const t = await db.prepare("SELECT id,tg_id,name,username,status,updated FROM tickets WHERE id=?").bind(id).first();
+    if (!t) return json({ error: "تیکت پیدا نشد" }, 404);
+    const msgs = await db.prepare("SELECT sender,text,ts FROM ticket_msgs WHERE ticket_id=? ORDER BY id").bind(id).all();
+    return json({ ticket: t, messages: msgs.results || [] });
+  }
+  let b;
+  try { b = await request.json(); } catch { return json({ error: "bad" }, 400); }
+  const id = parseInt(b.id);
+  if (!(id > 0)) return json({ error: "bad" }, 400);
+  if (b.action === "close") {
+    await db.prepare("UPDATE tickets SET status='closed', updated=? WHERE id=?").bind(Date.now(), id).run();
+    return json({ ok: true });
+  }
+  if (b.action === "reply") {
+    const text = String(b.text || "").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, "").trim();
+    if (!text || text.length > 3500) return json({ error: "متن پاسخ باید بین ۱ تا ۳۵۰۰ کاراکتر باشه" }, 400);
+    const res = await ticketReply(env, db, id, text);
+    if (res.error) return json({ error: res.error }, res.status);
+    return json({ ok: true, delivered: res.delivered });
+  }
+  return json({ error: "عملیات نامعتبر" }, 400);
+}
+
+/* ---------------- یادآوری انقضا (Cron) ---------------- */
+const REMIND_BATCH = 15;
+async function runReminders(env) {
+  if (!env.BOT_TOKEN) return;
+  const db = await getDB(env);
+  const st = await getSettings(db);
+  if (st.remind_days <= 0) return;
+  const now = Date.now();
+  const rows = (await db.prepare(
+    `SELECT s.tg_id, s.until FROM subs s LEFT JOIN reminders r ON r.tg_id=s.tg_id
+     WHERE s.until>? AND s.until<=? AND (r.until IS NULL OR r.until<>s.until)
+       AND s.tg_id NOT IN (SELECT tg_id FROM bans)
+     ORDER BY s.until LIMIT ?`
+  ).bind(now, now + st.remind_days * 86400000, REMIND_BATCH).all()).results || [];
+  for (const r of rows) {
+    const days = Math.max(1, Math.ceil((r.until - now) / 86400000));
+    const when = new Date(r.until).toLocaleDateString("fa-IR", { timeZone: "Asia/Tehran" });
+    const res = await tg(env, "sendMessage", {
+      chat_id: r.tg_id,
+      text: `⏰ اشتراکت ${fa(days)} روز دیگه تموم می‌شه (تا ${when}).\nبرای تمدید، /plans رو بفرست.`,
+    }).catch(() => ({ ok: false }));
+    if (res.error_code === 429) break;
+    // موفق یا کاربر بلاکمون کرده → دیگه تکرار نشه
+    if (res.ok || res.error_code === 403) {
+      await db.prepare("INSERT INTO reminders(tg_id,until) VALUES(?,?) ON CONFLICT(tg_id) DO UPDATE SET until=excluded.until")
+        .bind(r.tg_id, r.until).run();
+    }
+  }
+}
+
+/* ---------------- پیام همگانی (Cron) ---------------- */
+const BROADCAST_BATCH = 15;
+const BC_TARGETS = ["all", "sub", "free"];
+// گیرنده‌ها: همه‌ی کاربرهای ربات / فقط دارای اشتراک / فقط بدون اشتراک (ادمین و بن‌شده‌ها حذف)
+function audience(target, now, adminId) {
+  let sql = "tg_id<>? AND tg_id NOT IN (SELECT tg_id FROM bans)";
+  const p = [String(adminId || "")];
+  if (target === "sub") { sql += " AND tg_id IN (SELECT tg_id FROM subs WHERE until>?)"; p.push(now); }
+  if (target === "free") { sql += " AND tg_id NOT IN (SELECT tg_id FROM subs WHERE until>?)"; p.push(now); }
+  return { sql, p };
+}
+
+async function runBroadcasts(env) {
+  if (!env.BOT_TOKEN) return;
+  const db = await getDB(env);
+  const bc = await db.prepare("SELECT * FROM broadcasts WHERE status='running' ORDER BY id LIMIT 1").first();
+  if (!bc) return;
+  const a = audience(bc.target, Date.now(), env.ADMIN_TG_ID);
+  const rows = (await db.prepare(`SELECT tg_id FROM users WHERE ${a.sql} AND tg_id>? ORDER BY tg_id LIMIT ?`)
+    .bind(...a.p, bc.cursor || "", BROADCAST_BATCH).all()).results || [];
+  if (!rows.length) {
+    await db.prepare("UPDATE broadcasts SET status='done', finished=? WHERE id=?").bind(Date.now(), bc.id).run();
+    const d = await db.prepare("SELECT sent,failed FROM broadcasts WHERE id=?").bind(bc.id).first();
+    await notifyAdmin(env, db, `📣 پیام همگانی #${bc.id} تموم شد.\n✅ ارسال شد: ${fa(d.sent)}\n❌ ناموفق: ${fa(d.failed)}`);
+    return;
+  }
+  let sent = 0, failed = 0, cursor = bc.cursor || "";
+  for (const r of rows) {
+    const res = await tg(env, "sendMessage", { chat_id: r.tg_id, text: bc.text }).catch(() => ({ ok: false }));
+    if (res.ok) sent++;
+    else if (res.error_code === 429) break; // محدودیت تلگرام: دفعه‌ی بعد از همین‌جا ادامه می‌ده
+    else failed++;
+    cursor = r.tg_id;
+  }
+  await db.prepare("UPDATE broadcasts SET sent=sent+?, failed=failed+?, cursor=? WHERE id=?").bind(sent, failed, cursor, bc.id).run();
+}
+
+async function adminBroadcasts(request, env) {
+  const db = await getDB(env);
+  if (request.method === "GET") {
+    const r = await db.prepare("SELECT id,text,target,status,total,sent,failed,created,finished FROM broadcasts ORDER BY id DESC LIMIT 20").all();
+    return json({ broadcasts: r.results || [] });
+  }
+  let b;
+  try { b = await request.json(); } catch { return json({ error: "bad" }, 400); }
+  if (b.cancel) {
+    await db.prepare("UPDATE broadcasts SET status='cancelled', finished=? WHERE id=? AND status='running'").bind(Date.now(), parseInt(b.id) || 0).run();
+    return json({ ok: true });
+  }
+  const text = String(b.text || "").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, "").trim();
+  if (!text || text.length > 3500) return json({ error: "متن باید بین ۱ تا ۳۵۰۰ کاراکتر باشه" }, 400);
+  if (!BC_TARGETS.includes(b.target)) return json({ error: "گروه گیرنده نامعتبره" }, 400);
+  const now = Date.now();
+  const a = audience(b.target, now, env.ADMIN_TG_ID);
+  const cnt = await db.prepare(`SELECT COUNT(*) n FROM users WHERE ${a.sql}`).bind(...a.p).first();
+  if (!cnt.n) return json({ error: "هیچ گیرنده‌ای برای این گروه نیست" }, 400);
+  const res = await db.prepare("INSERT INTO broadcasts(text,target,status,total,sent,failed,cursor,created) VALUES(?,?, 'running',?,0,0,'',?)")
+    .bind(text, b.target, cnt.n, now).run();
+  return json({ ok: true, id: res.meta.last_row_id, total: cnt.n });
+}
+
 /* ---------------- router ---------------- */
 export default {
+  // اجرای هر دقیقه (wrangler.jsonc → triggers): یادآوری انقضا و ارسال پیام همگانی
+  async scheduled(event, env) {
+    try { await runReminders(env); } catch (e) { console.error("reminders", e); }
+    try { await runBroadcasts(env); } catch (e) { console.error("broadcasts", e); }
+  },
   async fetch(request, env) {
     const url = new URL(request.url);
     const p = url.pathname;
@@ -1012,6 +1252,18 @@ export default {
       if (p === "/api/admin/webhook" && request.method === "POST") {
         const bad = await adminAuth(request, env); if (bad) return bad;
         return await adminWebhook(request, env);
+      }
+      if (p === "/api/admin/tickets" && request.method === "GET") {
+        const bad = await adminAuth(request, env); if (bad) return bad;
+        return await adminTickets(env, url);
+      }
+      if (p === "/api/admin/ticket" && (request.method === "GET" || request.method === "POST")) {
+        const bad = await adminAuth(request, env); if (bad) return bad;
+        return await adminTicket(request, env, url);
+      }
+      if ((p === "/api/admin/broadcasts" && request.method === "GET") || (p === "/api/admin/broadcast" && request.method === "POST")) {
+        const bad = await adminAuth(request, env); if (bad) return bad;
+        return await adminBroadcasts(request, env);
       }
       if (p === "/api/admin/tg/start" && request.method === "POST") return await adminTgStart(env);
       if (p === "/api/admin/tg/check" && request.method === "GET") return await adminTgCheck(env, url);

@@ -89,8 +89,44 @@ button{background:var(--pink);border:0;color:#fff;cursor:pointer}
     <textarea id="setPay"></textarea>
     <label>تعداد روز اشتراک رایگان به ازای هر دعوت (۰ = غیرفعال)</label>
     <input id="setRef" type="number" min="0" max="365" inputmode="numeric"/>
+    <label>یادآوری انقضا: چند روز قبل از پایان اشتراک به کاربر پیام داده بشه (۰ = غیرفعال)</label>
+    <input id="setRemind" type="number" min="0" max="30" inputmode="numeric"/>
+    <label style="display:flex;align-items:center;gap:8px;color:var(--tx)"><input id="setNotify" type="checkbox" style="width:auto"/> اعلان به تلگرام ادمین: کاربر جدید و رسیدن کاربر به سقف</label>
     <button onclick="saveSettings()" style="margin-top:12px;width:100%">ذخیره تنظیمات</button>
     <div style="font-size:11px;color:var(--mut);margin-top:8px">این‌ها مقدار پیش‌فرض همه‌ی کاربرانه. سهمیه ساعت ۰۰:۰۰ به وقت ایران ریست می‌شه (هفته از شنبه، ماه شمسی). برای یک کاربر خاص، از لیست پایین دکمه‌ی «⚙️ سقف» رو بزن.</div>
+  </div>
+
+  <h2>🎫 تیکت‌های پشتیبانی</h2>
+  <div class="card">
+    <div class="btns" style="margin:0 0 8px;justify-content:flex-start">
+      <button id="tabOpen" onclick="setTab('open')">باز</button>
+      <button id="tabClosed" onclick="setTab('closed')" style="background:#232a40">بسته‌شده</button>
+    </div>
+    <div id="tickets"></div>
+  </div>
+  <div id="thread" class="card frm hide" style="margin-top:10px">
+    <div style="font-weight:700" id="tTitle"></div>
+    <div id="tmsgs" style="max-height:340px;overflow:auto;margin-top:8px"></div>
+    <label>پاسخ به کاربر</label>
+    <textarea id="tReply"></textarea>
+    <div class="btns">
+      <button onclick="closeTicket()" style="background:#232a40">بستن تیکت</button>
+      <button class="ok" onclick="replyTicket()">ارسال پاسخ</button>
+    </div>
+  </div>
+
+  <h2>📣 پیام همگانی به کاربران ربات</h2>
+  <div class="card frm">
+    <textarea id="bcText" placeholder="متن پیام (حداکثر ۳۵۰۰ کاراکتر، متن ساده)"></textarea>
+    <label>گیرنده‌ها</label>
+    <select id="bcTarget" style="width:100%;font:inherit;border-radius:10px;border:1px solid var(--line);background:#0e1220;color:var(--tx);padding:10px 12px">
+      <option value="all">همه‌ی کاربران ربات</option>
+      <option value="sub">فقط کاربران دارای اشتراک</option>
+      <option value="free">فقط کاربران بدون اشتراک</option>
+    </select>
+    <button onclick="sendBroadcast()" style="margin-top:12px;width:100%">ارسال پیام همگانی</button>
+    <div style="font-size:11px;color:var(--mut);margin-top:8px">ارسال تدریجی و در چند دقیقه انجام می‌شه. وقتی تموم شد، خبرش به تلگرام ادمین میاد.</div>
+    <div id="bcs" style="margin-top:12px"></div>
   </div>
 
   <h2>🎟 کدهای تخفیف</h2>
@@ -175,12 +211,12 @@ function render(d){
       <div class="sub" style="direction:rtl;text-align:left">${fa(v.actions)} فعالیت • ${on?"آنلاین":ago(v.last_seen,now)}</div></div></div>`}).join("")||'<span style="color:var(--mut)">هنوز کاربری نیست</span>';
 
   $("events").innerHTML=d.events.map(e=>`<div class="ev"><b>${esc(e.tg_name||(e.tg_username?"@"+e.tg_username:"#"+e.vid.slice(0,6)))}</b> — ${evText(e)}<time>${clock(e.ts)}</time></div>`).join("")||'<span style="color:var(--mut)">هنوز فعالیتی نیست</span>';
-  if(d.settings&&!window._setLoaded){window._setLoaded=true;$("setFree").value=d.settings.free_limit;$("setSub").value=d.settings.sub_limit;$("setText").value=d.settings.buy_text;$("setFree2").value=d.settings.free_countries;$("setPlans").value=d.settings.plans_text;$("setPay").value=d.settings.pay_text;$("setRef").value=d.settings.ref_days}
+  if(d.settings&&!window._setLoaded){window._setLoaded=true;$("setFree").value=d.settings.free_limit;$("setSub").value=d.settings.sub_limit;$("setText").value=d.settings.buy_text;$("setFree2").value=d.settings.free_countries;$("setPlans").value=d.settings.plans_text;$("setPay").value=d.settings.pay_text;$("setRef").value=d.settings.ref_days;$("setRemind").value=d.settings.remind_days;$("setNotify").checked=!!d.settings.admin_notify}
   $("upd").textContent="آخرین به‌روزرسانی: "+new Date().toLocaleTimeString("fa-IR");
 }
 async function start(){
-  $("login").classList.add("hide");$("app").classList.remove("hide");loadCodes();
-  clearInterval(timer);timer=setInterval(()=>{if(!document.hidden)load()},15000);
+  $("login").classList.add("hide");$("app").classList.remove("hide");loadCodes();loadTickets();loadBroadcasts();
+  clearInterval(timer);timer=setInterval(()=>{if(!document.hidden){load();loadTickets();loadBroadcasts();if(window._tid)openTicket(window._tid,true)}},15000);
 }
 async function doLogin(){
   pw=$("pw").value;$("err").textContent="";
@@ -236,7 +272,7 @@ async function revoke(id){
   try{await post("/api/admin/sub",{tg_id:id,days:0});load()}catch(e){alert("❌ "+e.message)}
 }
 async function saveSettings(){
-  try{await post("/api/admin/settings",{free_limit:$("setFree").value,sub_limit:$("setSub").value,buy_text:$("setText").value,free_countries:$("setFree2").value,plans:$("setPlans").value,pay_text:$("setPay").value,ref_days:$("setRef").value});alert("✅ ذخیره شد.");window._setLoaded=false;load()}catch(e){alert("❌ "+e.message)}
+  try{await post("/api/admin/settings",{free_limit:$("setFree").value,sub_limit:$("setSub").value,buy_text:$("setText").value,free_countries:$("setFree2").value,plans:$("setPlans").value,pay_text:$("setPay").value,ref_days:$("setRef").value,remind_days:$("setRemind").value,admin_notify:$("setNotify").checked});alert("✅ ذخیره شد.");window._setLoaded=false;load()}catch(e){alert("❌ "+e.message)}
 }
 let tgTimer;
 async function tgLogin(){
@@ -274,6 +310,54 @@ async function addCode(){
 }
 async function toggleCode(code,off){
   try{await post("/api/admin/codes",{code,disable:off});loadCodes()}catch(e){alert("❌ "+e.message)}
+}
+let tab="open";
+function setTab(t){tab=t;$("tabOpen").style.background=t==="open"?"":"#232a40";$("tabClosed").style.background=t==="closed"?"":"#232a40";loadTickets()}
+async function loadTickets(){
+  const r=await fetch("/api/admin/tickets?status="+tab,{headers:authH()}).catch(()=>null);
+  if(!r||!r.ok)return;
+  const d=await r.json();
+  $("tickets").innerHTML=d.tickets.map(t=>{
+    const who=t.name||(t.username?"@"+t.username:t.tg_id);
+    const pre=t.last_sender==="admin"?"پشتیبانی: ":"";
+    return `<div class="row" style="cursor:pointer" onclick="openTicket(${t.id})"><div><b>#${t.id} ${esc(who)}</b><div class="sub" style="direction:rtl;text-align:right">${esc(pre+(t.last||"").slice(0,80))}</div></div><div class="sub">${ago(t.updated,Date.now())}</div></div>`;
+  }).join("")||'<span style="color:var(--mut)">تیکتی نیست</span>';
+}
+async function openTicket(id,silent){
+  const r=await fetch("/api/admin/ticket?id="+id,{headers:authH()}).catch(()=>null);
+  if(!r||!r.ok)return;
+  const d=await r.json();
+  window._tid=id;
+  $("thread").classList.remove("hide");
+  const t=d.ticket;
+  $("tTitle").textContent=`تیکت #${id} — ${t.name||""} ${t.username?"@"+t.username:""} (${t.tg_id}) • ${t.status==="open"?"باز":"بسته"}`;
+  $("tmsgs").innerHTML=d.messages.map(m=>`<div class="ev" style="white-space:pre-wrap;${m.sender==="admin"?"background:rgba(60,213,255,.06)":""}"><b>${m.sender==="admin"?"پشتیبانی":"کاربر"}</b> — ${esc(m.text)}<time>${clock(m.ts)}</time></div>`).join("");
+  if(!silent)$("tmsgs").scrollTop=$("tmsgs").scrollHeight;
+}
+async function replyTicket(){
+  const text=$("tReply").value.trim();if(!text)return;
+  try{const d=await post("/api/admin/ticket",{id:window._tid,action:"reply",text});$("tReply").value="";if(!d.delivered)alert("⚠️ ذخیره شد ولی به کاربر نرسید (احتمالاً ربات رو بلاک کرده).");openTicket(window._tid);loadTickets()}catch(e){alert("❌ "+e.message)}
+}
+async function closeTicket(){
+  if(!confirm("این تیکت بسته بشه؟"))return;
+  try{await post("/api/admin/ticket",{id:window._tid,action:"close"});window._tid=null;$("thread").classList.add("hide");loadTickets()}catch(e){alert("❌ "+e.message)}
+}
+async function sendBroadcast(){
+  const text=$("bcText").value.trim();if(!text)return alert("متن پیام رو بنویس");
+  const t=$("bcTarget");const label=t.options[t.selectedIndex].text;
+  if(!confirm(`این پیام برای «${label}» ارسال بشه؟`))return;
+  try{const d=await post("/api/admin/broadcast",{text,target:t.value});$("bcText").value="";alert(`✅ ثبت شد. گیرنده: ${fa(d.total)} نفر (به‌تدریج ارسال می‌شه)`);loadBroadcasts()}catch(e){alert("❌ "+e.message)}
+}
+async function loadBroadcasts(){
+  const r=await fetch("/api/admin/broadcasts",{headers:authH()}).catch(()=>null);
+  if(!r||!r.ok)return;
+  const d=await r.json();
+  const st={running:"در حال ارسال",done:"تمام شد",cancelled:"لغو شد"};
+  $("bcs").innerHTML=d.broadcasts.map(b=>`<div class="row"><div><b>#${b.id}</b> ${esc(st[b.status]||b.status)}<div class="sub" style="direction:rtl;text-align:right">${esc(b.text.slice(0,60))}</div><div class="sub" style="direction:rtl;text-align:right">✅ ${fa(b.sent)} • ❌ ${fa(b.failed)} • از ${fa(b.total)}</div></div>${b.status==="running"?`<div class="btns" style="margin:0"><button onclick="cancelBroadcast(${b.id})">لغو</button></div>`:""}</div>`).join("")||'<span style="color:var(--mut)">هنوز پیامی ارسال نشده</span>';
+}
+async function cancelBroadcast(id){
+  if(!confirm("ارسال باقی‌مونده لغو بشه؟"))return;
+  try{await post("/api/admin/broadcast",{id,cancel:true});loadBroadcasts()}catch(e){alert("❌ "+e.message)}
 }
 async function setupBot(){
   try{

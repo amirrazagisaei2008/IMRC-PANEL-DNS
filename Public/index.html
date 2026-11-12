@@ -649,6 +649,7 @@ body.theme-tactical .au,body.theme-blood .au,body.theme-operator .au{opacity:.17
       <h3 class="s">برنامه و زبان</h3>
       <div class="grid"><button class="btn btn-sec" id="installBtn" style="display:none" onclick="installApp()">📲 نصب روی گوشی</button><button class="btn btn-sec" id="langToggle" onclick="toggleLang()">English</button></div>
       <div class="grid"><a class="btn btn-sec" href="/help.html" target="_blank" rel="noopener">❓ راهنما و سوالات</a><a class="btn btn-sec" href="/status.html" target="_blank" rel="noopener">🟢 وضعیت سرویس</a></div>
+      <div class="grid"><button class="btn btn-sec" id="pushBtn" style="display:none" onclick="enablePush()">🔔 اعلان یادآوری و پرداخت</button><button class="btn btn-sec" onclick="logoutAll()">🚪 خروج از همه‌ی دستگاه‌ها</button></div>
       <h3 class="s">پشتیبان‌گیری</h3>
       <div class="grid"><button class="btn btn-sec" onclick="backupSettings()">بکاپ</button><button class="btn btn-sec" onclick="restoreSettings()">بازگردانی</button></div>
       <div class="grid" style="margin-top:.7rem"><button class="btn btn-sec" onclick="replayWelcome()">پخش مجدد معرفی</button><button class="btn btn-sec" onclick="clearAllData()" style="color:var(--bad);border-color:var(--bad)">پاک کردن همه داده‌ها</button></div>
@@ -1613,6 +1614,41 @@ commands.push({id:"chest",label:"صندوق روزانه",action:()=>{switchTab(
     switchTab("main");buildAndDownload(false);
   };
 })();
+</script>
+<script>
+// اعلان مرورگر: فقط وقتی سرور کلید VAPID داره و کاربر وارد شده، دکمه نشون داده می‌شه
+function b64uToBytes(s){const p="=".repeat((4-s.length%4)%4);const b=atob((s+p).replace(/-/g,"+").replace(/_/g,"/"));return Uint8Array.from(b,c=>c.charCodeAt(0))}
+window.enablePush=async function(){
+  try{
+    if(!("serviceWorker" in navigator)||!("PushManager" in window)||!("Notification" in window)){toast("این مرورگر اعلان رو پشتیبانی نمی‌کنه");return}
+    const k=await fetch("/api/push/key",{cache:"no-store"});
+    if(!k.ok){toast("اعلان فعلاً فعال نیست");return}
+    const {key}=await k.json();
+    const perm=await Notification.requestPermission();
+    if(perm!=="granted"){toast("اجازه‌ی اعلان داده نشد");return}
+    const reg=await navigator.serviceWorker.ready;
+    const sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64uToBytes(key)});
+    const j=sub.toJSON();
+    const r=await fetch("/api/push/subscribe",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify({endpoint:j.endpoint,keys:j.keys})});
+    if(!r.ok){toast("ثبت نشد؛ دوباره وارد شو");return}
+    toast("✅ اعلان‌ها فعال شد");
+  }catch(e){toast("❌ فعال‌سازی اعلان انجام نشد")}
+};
+(async function initPush(){
+  try{
+    if(!("serviceWorker" in navigator)||!("PushManager" in window))return;
+    const k=await fetch("/api/push/key",{cache:"no-store"});
+    if(!k.ok)return;
+    const me=await fetch("/api/me",{credentials:"same-origin",cache:"no-store"});
+    if(!me.ok)return;
+    document.getElementById("pushBtn").style.display="";
+  }catch(e){}
+})();
+window.logoutAll=async function(){
+  if(!confirm("از همه‌ی دستگاه‌ها خارج می‌شی؟"))return;
+  try{const r=await fetch("/api/logout-all",{method:"POST",credentials:"same-origin"});if(!r.ok)throw new Error();location.href="/login.html"}
+  catch(e){toast("❌ خروج انجام نشد، دوباره امتحان کن")}
+};
 </script>
 <script src="/i18n-en.js"></script>
 </body>

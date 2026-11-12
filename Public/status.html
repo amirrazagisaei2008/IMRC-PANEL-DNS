@@ -29,6 +29,20 @@
   .badge{font-size:13px;font-weight:700;white-space:nowrap}
   .ok .badge{color:var(--ok)} .degraded .badge{color:var(--warn)} .down .badge{color:var(--bad)} .unknown .badge{color:var(--dim)}
   .foot{margin-top:14px;color:var(--dim);font-size:12px;line-height:1.8;text-align:center}
+  .hist{margin-top:14px;border:1px solid var(--line);border-radius:16px;background:var(--card);padding:14px 16px}
+  .hist-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-size:14px}
+  .upPct{font-weight:700;color:var(--ok);font-size:18px}
+  .bars{display:flex;gap:3px;margin-top:12px;direction:ltr;height:34px;align-items:flex-end}
+  .bars .b{flex:1 1 0;height:100%;border-radius:3px;background:var(--line)}
+  .bars .b.ok{background:var(--ok)} .bars .b.warn{background:var(--warn)} .bars .b.bad{background:var(--bad)}
+  .bar-legend{display:flex;justify-content:space-between;color:var(--dim);font-size:11px;margin-top:6px}
+  .inc-title{margin-top:16px;font-weight:700;font-size:14px}
+  .inc{border-top:1px solid var(--line);padding:10px 0}
+  .inc-h{display:flex;justify-content:space-between;gap:8px;align-items:center}
+  .inc.degraded .badge{color:var(--warn)} .inc.down .badge{color:var(--bad)}
+  .inc-b{margin-top:4px;font-size:13px;line-height:1.7;color:var(--tx);white-space:pre-line}
+  .inc small{display:block;color:var(--dim);font-size:12px;margin-top:4px}
+  .inc-empty{color:var(--dim);font-size:13px;margin-top:8px}
   a{color:#7fd8ff}
   /* دو زبان: فقط بلوک زبان فعال نمایش داده می‌شه */
   html:not([lang="en"]) .en{display:none}
@@ -47,6 +61,13 @@
 
   <div class="list" id="list"></div>
 
+  <div class="hist" id="hist" hidden>
+    <div class="hist-head"><b id="upTitle"></b><span class="upPct" id="upPct"></span></div>
+    <div class="bars" id="bars"></div>
+    <div class="bar-legend"><span id="legOld"></span><span id="legNew"></span></div>
+    <div id="incs"></div>
+  </div>
+
   <div class="foot">
     <span class="fa">هر ۳۰ ثانیه بروزرسانی می‌شه. </span><span class="en">Refreshes every 30 seconds. </span>
     <span id="updated"></span><br/>
@@ -62,19 +83,24 @@
       unreachable:"در دسترس نیست. اینترنت خودت رو چک کن.", loading:"در حال بررسی…",
       words:{ok:"فعال", degraded:"کند / ناپایدار", down:"قطع", unknown:"نامشخص"},
       comps:{api:["پنل و API","پاسخ می‌ده"], database:["پایگاه داده","پاسخ‌گویی دیتابیس"], cron:["کارهای زمان‌بندی‌شده","یادآور اشتراک و پیام همگانی"]},
-      updated:"آخرین بررسی: ", ms:" میلی‌ثانیه", locale:"fa-IR"
+      updated:"آخرین بررسی: ", ms:" میلی‌ثانیه", locale:"fa-IR",
+      uptimeTitle:"آپ‌تایم {n} روز اخیر", uptimeNone:"بدون داده", noData:"بدون داده", legOld:"۳۰ روز پیش", legNew:"امروز",
+      incTitle:"حوادث و اطلاعیه‌ها", incEmpty:"حادثه‌ای ثبت نشده.", incOpen:"در حال بررسی", incResolved:"رفع شد:", since:"از", lvlDegraded:"کند / ناپایدار", lvlDown:"قطع"
     },
     en: {
       ok:"All systems operational", degraded:"Some systems are slow or unstable", down:"Service unavailable",
       unreachable:"Unavailable. Check your internet connection.", loading:"Checking…",
       words:{ok:"Operational", degraded:"Degraded", down:"Down", unknown:"Unknown"},
       comps:{api:["Panel & API","Responding"], database:["Database","Query response"], cron:["Scheduled jobs","Subscription reminders & broadcasts"]},
-      updated:"Last checked: ", ms:" ms", locale:"en-US"
+      updated:"Last checked: ", ms:" ms", locale:"en-US",
+      uptimeTitle:"Uptime, last {n} days", uptimeNone:"No data", noData:"No data", legOld:"30 days ago", legNew:"Today",
+      incTitle:"Incidents & notices", incEmpty:"No incidents reported.", incOpen:"Investigating", incResolved:"Resolved", since:"From", lvlDegraded:"Degraded", lvlDown:"Outage"
     }
   };
   let lang = (new URLSearchParams(location.search).get("lang")) || localStorage.getItem("IMRC_lang") || "fa";
   if (lang !== "en") lang = "fa";
   let last = null;
+  let hist = null;
 
   function setLang(l){
     lang = l === "en" ? "en" : "fa";
@@ -84,6 +110,7 @@
     document.getElementById("langBtn").textContent = lang === "en" ? "فارسی" : "English";
     document.title = lang === "en" ? "Service status • IMRC" : "وضعیت سرویس • IMRC";
     if (last) render(last); else render(null);
+    renderHist(hist);
   }
   window.toggleLang = function(){ setLang(lang === "en" ? "fa" : "en") };
 
@@ -118,6 +145,43 @@
     document.getElementById("updated").textContent = t.updated + new Date(d.updated).toLocaleTimeString(t.locale, {timeZone: "Asia/Tehran", hour: "2-digit", minute: "2-digit"});
   }
 
+  const fmtD = (ts) => new Date(ts).toLocaleString(T[lang].locale, {timeZone: "Asia/Tehran", dateStyle: "medium", timeStyle: "short"});
+
+  async function loadHistory(){
+    try {
+      const r = await fetch("/api/status/history", {cache: "no-store"});
+      if (!r.ok) throw new Error("status " + r.status);
+      hist = await r.json();
+    } catch (e) { hist = null; }
+    renderHist(hist);
+  }
+
+  function renderHist(h){
+    const box = document.getElementById("hist");
+    if (!h) { box.hidden = true; return; }
+    const t = T[lang];
+    box.hidden = false;
+    document.getElementById("upTitle").textContent = t.uptimeTitle.replace("{n}", h.days);
+    document.getElementById("upPct").textContent = h.uptime === null ? t.uptimeNone : Number(h.uptime).toLocaleString(t.locale, {maximumFractionDigits: 2}) + "%";
+    document.getElementById("bars").innerHTML = (h.bars || []).map(b => {
+      const cls = b.pct === null ? "" : b.pct >= 99.5 ? "ok" : b.pct >= 95 ? "warn" : "bad";
+      const tip = b.date + " — " + (b.pct === null ? t.noData : Number(b.pct).toLocaleString(t.locale) + "%");
+      return '<i class="b ' + cls + '" title="' + esc(tip) + '"></i>';
+    }).join("");
+    document.getElementById("legOld").textContent = t.legOld;
+    document.getElementById("legNew").textContent = t.legNew;
+    const inc = h.incidents || [];
+    document.getElementById("incs").innerHTML =
+      '<div class="inc-title">' + esc(t.incTitle) + '</div>' +
+      (inc.length ? inc.map(i => {
+        const state = i.resolved ? t.incResolved + " " + fmtD(i.resolved) : t.incOpen;
+        return '<div class="inc ' + esc(i.level) + '"><div class="inc-h"><b>' + esc(i.title) + '</b>' +
+          '<span class="badge">' + esc(i.level === "down" ? t.lvlDown : t.lvlDegraded) + '</span></div>' +
+          (i.body ? '<div class="inc-b">' + esc(i.body) + '</div>' : '') +
+          '<small>' + esc(t.since) + ' ' + esc(fmtD(i.started)) + ' — ' + esc(state) + '</small></div>';
+      }).join("") : '<div class="inc-empty">' + esc(t.incEmpty) + '</div>');
+  }
+
   function esc(s){ return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
   async function load(){
@@ -138,7 +202,9 @@
 
   setLang(lang);
   load();
+  loadHistory();
   setInterval(load, 30000);
+  setInterval(loadHistory, 60000);
 })();
 </script>
 </body>

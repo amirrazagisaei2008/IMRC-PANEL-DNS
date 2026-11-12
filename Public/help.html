@@ -43,6 +43,10 @@
     <button class="lang" id="langBtn" type="button" onclick="toggleLang()">English</button>
   </div>
   <div class="sub"><span class="fa">نصب پنل روی گوشی، ساخت و وصل کردن کانفیگ، و جواب سوال‌های رایج.</span><span class="en">Install the panel on your phone, import your config, and common questions.</span></div>
+  <div id="envWarn" class="card warn" style="display:none">
+    <div class="fa">این صفحه داخل مرورگر برنامه‌ی دیگری (مثل تلگرام یا اینستاگرام) باز شده. برای نصب روی گوشی، لینک را در <b>Safari</b> (آیفون) یا <b>Chrome</b> (اندروید) باز کن.</div>
+    <div class="en">This page is open inside another app’s browser (Telegram, Instagram…). To install on your phone, open the link in <b>Safari</b> (iPhone) or <b>Chrome</b> (Android).</div>
+  </div>
   <div class="nav">
     <a href="/"><span class="fa">بازگشت به پنل</span><span class="en">Back to panel</span></a>
     <a href="/status.html"><span class="fa">وضعیت سرویس</span><span class="en">Service status</span></a>
@@ -186,6 +190,12 @@
   }
   window.toggleLang = function(){ setLang(lang === "en" ? "fa" : "en") };
   setLang(lang);
+
+  // هشدار: داخل مرورگر تلگرام/اینستاگرام، یا iPhone با مرورگری غیر از Safari (نصب اپ کار نمی‌کنه)
+  const ua = navigator.userAgent || "";
+  const inApp = /Telegram|Instagram|FBAN|FBAV|Line\/|MicroMessenger|Snapchat/i.test(ua);
+  const iosNotSafari = /iPhone|iPad|iPod/.test(ua) && /CriOS|FxiOS|EdgiOS|OPiOS/.test(ua);
+  if (inApp || iosNotSafari) document.getElementById("envWarn").style.display = "";
 })();
 </script>
 </body>

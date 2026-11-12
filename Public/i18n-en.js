@@ -162,6 +162,7 @@
  "📲 نصب روی گوشی": "📲 Install on phone",
  "❓ راهنما و سوالات": "❓ Help & FAQ",
  "🟢 وضعیت سرویس": "🟢 Service status",
+ "🚪 خروج از همه‌ی دستگاه‌ها": "🚪 Log out of all devices",
  "پشتیبان‌گیری": "Backup",
  "بکاپ": "Backup",
  "بازگردانی": "Restore",
@@ -196,15 +197,521 @@
  "لودات، کالربندی، برنامه تمرین...": "Loadouts, sensitivity, practice plan...",
  "کوچک‌تر": "Smaller",
  "بزرگ‌تر": "Larger",
- "جستجوی دستور... (مثلاً: رنکد، تم، دانلود)": "Search commands... (e.g. ranked, theme, download)"
+ "جستجوی دستور... (مثلاً: رنکد، تم، دانلود)": "Search commands... (e.g. ranked, theme, download)",
+ "Address ندارد": "No address",
+ "Ctrl+K همه‌چیز را پیدا می‌کند": "Ctrl+K finds everything",
+ "Ctrl+K پالت | Ctrl+Enter ساخت | 1-5 تب | F تمام‌صفحه | T تم": "Ctrl+K palette | Ctrl+Enter build | 1-5 tabs | F fullscreen | T theme",
+ "DNS الکترو را امتحان کن": "Try the Electro DNS",
+ "DNS تنظیم نشده": "DNS not set",
+ "Endpoint یا پورت نامعتبر": "Invalid endpoint or port",
+ "IMRC • پنل مدیریت": "IMRC • Admin panel",
+ "K/D بالای ۱.۵": "K/D above 1.5",
+ "MTU تنظیم نشده": "MTU not set",
+ "MTU عجیب است:": "Unusual MTU:",
+ "MTU پایین‌تر یعنی پایداری بیشتر روی دیتا": "Lower MTU means more stability on mobile data",
+ "PrivateKey معتبر": "Valid PrivateKey",
+ "PrivateKey نامعتبر": "Invalid PrivateKey",
+ "PublicKey معتبر": "Valid PublicKey",
+ "PublicKey نامعتبر": "Invalid PublicKey",
+ "آب و استراحت آماده است": "Water & rest ready",
+ "آخرین به‌روزرسانی:": "Last updated:",
+ "آفلاین": "Offline",
+ "آلمان": "Germany",
+ "آماده‌ای؟": "Ready?",
+ "آمریکا": "USA",
+ "آنلاین": "Online",
+ "آنلاین الان": "Online now",
+ "آپ‌تایم: هنوز داده‌ای ثبت نشده": "Uptime: no data yet",
+ "آیدی عددی تلگرام کاربر": "User's numeric Telegram ID",
+ "آیدی و کلید پلن را وارد کن": "Enter the Telegram ID and plan key",
+ "آیفون: دکمه‌ی Share ← Add to Home Screen. اندروید: منوی ⋮ ← نصب برنامه": "iPhone: Share → Add to Home Screen. Android: ⋮ menu → Install app",
+ "اتاق جنگ": "War room",
+ "اجازه‌ی اعلان داده نشد": "Notification permission was not granted",
+ "اجرا": "Run",
+ "ادامه": "Continue",
+ "ارتقا به سطح": "Upgrade to level",
+ "ارسال باقی‌مونده لغو بشه؟": "Cancel the remaining sends?",
+ "ارسال تدریجی و در چند دقیقه انجام می‌شه. وقتی تموم شد، خبرش به تلگرام ادمین میاد.": "Sending happens gradually over a few minutes. When it finishes, the admin gets a Telegram notice.",
+ "ارسال پاسخ": "Send reply",
+ "ارسال پیام همگانی": "Send broadcast",
+ "از": "from",
+ "از همه‌ی دستگاه‌ها خارج می‌شی؟": "Log out of all devices?",
+ "استاد MTU": "MTU Master",
+ "اسم ساخته شد:": "Name created:",
+ "اشتراک این کاربر لغو بشه؟": "Cancel this user's subscription?",
+ "اشتراک فعال": "Active subscription",
+ "اشتراک منقضی‌شده": "Expired subscription",
+ "اصلی": "Main",
+ "اعتباری ثبت نشده": "No credit yet",
+ "اعلان به تلگرام ادمین: کاربر جدید و رسیدن کاربر به سقف": "Telegram admin alerts: new user and user hitting the limit",
+ "اعلان فعلاً فعال نیست": "Notifications are not available yet",
+ "افزودن اشتراک": "Add subscription",
+ "الان بزن!": "Hit it now!",
+ "امارات": "UAE",
+ "امروز": "Today",
+ "امن؛ میانگین": "Safe; average",
+ "امکانات کلیدی": "Key features",
+ "انگلیس": "UK",
+ "اول پیش‌نمایش بگیر": "Preview first",
+ "اول کانفیگ بساز": "Build a config first",
+ "اولین مچ": "First match",
+ "اولین کانفیگ": "First config",
+ "اپ‌های پس‌زمینه بسته شد": "Background apps closed",
+ "این تیکت بسته بشه؟": "Close this ticket?",
+ "این ماه": "This month",
+ "این مرورگر اعلان رو پشتیبانی نمی‌کنه": "This browser does not support notifications",
+ "این مرورگر پشتیبانی نمی‌کند": "This browser does not support it",
+ "این هفته": "This week",
+ "این پرداخت در گزارش درآمد حساب می‌شود و در گزارش فعالیت ثبت می‌شود.": "This payment counts in revenue and is logged in the activity report.",
+ "این کاربر مسدود بشه؟": "Ban this user?",
+ "اینترنت در دسترس نیست یا مسدود است.": "Internet is unavailable or blocked.",
+ "با کلید W حالت جنگی را روشن کن": "Press W to enable war mode",
+ "بارگذاری": "Loading",
+ "باز": "Open",
+ "بازه": "Range",
+ "بازگردانی موفق ✅": "Restore successful ✅",
+ "بخش Interface وجود ندارد": "No Interface section",
+ "بخش Interface": "Interface section",
+ "بخش Peer وجود ندارد": "No Peer section",
+ "بخش Peer": "Peer section",
+ "بخش تاریخچه تغییر کرد": "History section changed",
+ "بدون انقضا": "No expiry",
+ "بدون نام": "No name",
+ "برای دیدن سابقه دوباره وارد شو": "Sign in again to see history",
+ "برگشت به پیش‌فرض": "Reset to default",
+ "بریم!": "Let's go!",
+ "بزرگ": "Large",
+ "بستن": "Close",
+ "بستن تیکت": "Close ticket",
+ "بسته": "Closed",
+ "بسته‌شده": "Closed",
+ "بهترین پینگ": "Best ping",
+ "بکاپ دانلود شد": "Backup downloaded",
+ "تا +": "up to +",
+ "تاریخ پایان فصل": "Season end date",
+ "تاریخچه‌ای نیست": "No history",
+ "تاریخچه‌ای وجود ندارد": "No history",
+ "تب آمار": "Stats tab",
+ "تب اصلی": "Main tab",
+ "تب تنظیمات": "Settings tab",
+ "تب کالاف": "CODM tab",
+ "تخمین SR این سشن:": "Estimated SR this session:",
+ "ترکیه مستر": "Turkey Master",
+ "ترکیه": "Turkey",
+ "تعداد کانفیگ مجاز": "Allowed configs",
+ "تم، میانبر و بیشتر": "Theme, shortcuts & more",
+ "تمام شد": "Done",
+ "تمام‌صفحه فعال شد": "Fullscreen on",
+ "تمرین هدف‌گیری": "Aim training",
+ "تنظیمات دستگاه ضعیف": "Low-end device settings",
+ "تنظیمات پرچم‌دار": "Flagship settings",
+ "توقف": "Stop",
+ "توی تلگرام روی «Start» بزن تا ورود تأیید بشه…": "Tap “Start” in Telegram to confirm sign-in…",
+ "تک‌تیرانداز": "Sniper",
+ "تگ اضافه شد": "Tag added",
+ "تیکتی نیست": "No tickets",
+ "ثانیه پیش": "seconds ago",
+ "ثبت تغییر": "Apply change",
+ "ثبت حادثه": "Log incident",
+ "ثبت نشد؛ دوباره وارد شو": "Not saved; sign in again",
+ "ثبت و فعال‌سازی": "Record & activate",
+ "جایزه بزرگ": "Big reward",
+ "جدید ۷ روز": "New, last 7 days",
+ "جستجو: نام، @یوزرنیم، آیدی، شهر": "Search: name, @username, ID, city",
+ "حادثه روی صفحه‌ی وضعیت سرویس نمایش داده می‌شه. بعد از رفع مشکل «بستن» رو بزن.": "The incident appears on the service status page. Tap “Close” once it is fixed.",
+ "حادثه‌ای ثبت نشده": "No incidents logged",
+ "حالت تورنمنت فعال شد 🏅": "Tournament mode on",
+ "حالت جنگی فعال": "War mode on",
+ "حالت جنگی": "War mode",
+ "حالت حرفه‌ای خاموش": "Pro mode off",
+ "حالت عادی": "Normal mode",
+ "حالت مطالعه خاموش": "Study mode off",
+ "حالت مطالعه فعال": "Study mode on",
+ "حداکثر ۵۰۰ کاربر در هر عملیات. اول پیش‌نمایش بگیر؛ همان فیلتر پیش‌نمایش اجرا می‌شود و اگر تعداد کاربرها عوض شده باشد، عملیات لغو می‌شود.": "Up to 500 users per action. Preview first; the same filter runs, and if the user count changed, the action is cancelled.",
+ "حذف شد": "Deleted",
+ "حساسیت و گرافیک چک شد": "Sensitivity & graphics checked",
+ "خاموش": "Off",
+ "خروج از تمام‌صفحه": "Exit fullscreen",
+ "خروج": "Log out",
+ "خروجی اکسل دانلود شد": "Excel export downloaded",
+ "خریداران": "Buyers",
+ "خطا در اتصال": "Connection error",
+ "خطا در ارتباط با سرور": "Server connection error",
+ "خطا در دریافت سابقه، بعداً دوباره امتحان کن": "Couldn't load history; try again later",
+ "خطا در دریافت فایل": "Couldn't download the file",
+ "خطا در دریافت پشتیبان": "Couldn't get the backup",
+ "خطای سرور": "Server error",
+ "خطا": "Error",
+ "خطر؛ میانگین": "Danger; average",
+ "داده کافی نیست": "Not enough data",
+ "دانلود شد:": "Downloaded:",
+ "در حال ارسال": "Sending",
+ "در حال تست...": "Testing...",
+ "در هر روز": "per day",
+ "در هر ماه شمسی": "per Jalali month",
+ "درصد تخفیف": "Discount %",
+ "دستوری یافت نشد": "No commands found",
+ "دقیقه پیش": "minutes ago",
+ "دمیج و RPM را وارد کن": "Enter damage and RPM",
+ "دوباره": "Again",
+ "دید در شب": "Night vision",
+ "ذخیره تنظیمات": "Save settings",
+ "راهنما تمام شد ✅": "Guide complete ✅",
+ "رایگان": "Free",
+ "رفع شد": "Resolved",
+ "رفع مسدودی": "Unban",
+ "رمز اشتباه است": "Wrong password",
+ "رمز مدیریت": "Admin password",
+ "روح شبانه": "Night spirit",
+ "روز تا پایان فصل": "days until season end",
+ "روز پیش": "days ago",
+ "روز": "day",
+ "روزانه": "Daily",
+ "روشن، ۷۰٪": "On, 70%",
+ "رکروت": "Recruit",
+ "رگه ۳ برد": "3-win streak",
+ "زمان تموم شد. دوباره امتحان کن.": "Time's up. Try again.",
+ "زمان عملیات تمام شد": "Action timed out",
+ "زود زدی! دوباره": "Too early! Again",
+ "ساخت کد": "Create code",
+ "ساعت پیش": "hours ago",
+ "ساعت‌ها": "Hours",
+ "سایه خاموش": "Shadow off",
+ "ستوان": "Lieutenant",
+ "سرباز": "Private",
+ "سرهنگ": "Colonel",
+ "سروان": "Captain",
+ "سرور جایگزین فوری": "Instant backup server",
+ "سرور جایگزین:": "Backup server:",
+ "سروری انتخاب نشده": "No server selected",
+ "سروری پیدا نشد": "No server found",
+ "سرگرد": "Major",
+ "سطح ۴": "Level 4",
+ "سقف اختصاصی": "Custom limit",
+ "سقف کانفیگ روزانه برای کاربر دارای اشتراک": "Daily config limit for subscribers",
+ "سقف کانفیگ روزانه برای کاربر رایگان": "Daily config limit for free users",
+ "سقف": "Limit",
+ "سلاح اصلی": "Primary weapon",
+ "سلاح فرعی": "Secondary weapon",
+ "شارژ گوشی بالای ۵۰٪": "Phone charge above 50%",
+ "شب بخیر": "Good night",
+ "شکارچی پینگ": "Ping hunter",
+ "صادر شد": "Issued",
+ "صبح بخیر": "Good morning",
+ "صبر کنید...": "Please wait...",
+ "صدا پشتیبانی نمی‌شود": "Sound is not supported",
+ "صدا": "Sound",
+ "صفحه روشن می‌ماند": "Keep screen on",
+ "صندوق امروز باز شده؛ فردا برگرد": "Today's chest is open; come back tomorrow",
+ "صندوق روزانه": "Daily chest",
+ "ضعیف؛ سرور یا کانفیگ دیگری امتحان کنید.": "Weak; try another server or config.",
+ "طوفان رنکد": "Ranked storm",
+ "ظهر بخیر": "Good afternoon",
+ "عالی؛ برای رنکد مناسب است.": "Excellent; great for ranked.",
+ "عربستان": "Saudi Arabia",
+ "عصر بخیر": "Good evening",
+ "عقاب صبح": "Morning eagle",
+ "عمان": "Oman",
+ "عنوان جدید + ۱۰ XP": "New title + 10 XP",
+ "عنوان رو بنویس": "Enter a title",
+ "غیرفعال": "Disabled",
+ "فایل در تب جدید باز شد — Save As بزن": "File opened in a new tab — use Save As",
+ "فایل نامعتبر": "Invalid file",
+ "فرانسه": "France",
+ "فردا برگرد": "Come back tomorrow",
+ "فرمانده بی‌وقفه": "Relentless commander",
+ "فعال امروز": "Active today",
+ "فعال ۳۰ روز": "Active 30 days",
+ "فعال ۷ روز": "Active 7 days",
+ "فعالیت‌های اخیر": "Recent activity",
+ "فقط اسکوپ، ۱۰۰٪": "Scope only, 100%",
+ "فقط کاربران بدون اشتراک": "Non-subscribers only",
+ "فقط کاربران دارای اشتراک": "Subscribers only",
+ "قابل قبول؛ برای مچ معمولی خوب است.": "Acceptable; good for regular matches.",
+ "قبل از رنکد پینگ را تست کن": "Test ping before ranked",
+ "قبلی": "Previous",
+ "قدرت بیشتر": "More power",
+ "قطع": "Outage",
+ "لغو شد": "Cancelled",
+ "لینک منقضی شد. دوباره امتحان کن.": "Link expired. Try again.",
+ "ماه": "month",
+ "ماهانه": "Monthly",
+ "متن پیام رو بنویس": "Write the message text",
+ "متوسط": "Medium",
+ "مثلاً: به‌خاطر به‌روزرسانی، ساخت کانفیگ تا ۲۰ دقیقه کند است.": "e.g. Due to an update, config creation may be slow for up to 20 minutes.",
+ "مسدودسازی": "Ban",
+ "مسدود": "Banned",
+ "موسیقی محیطی خاموش": "Ambient music off",
+ "موسیقی محیطی روشن/خاموش": "Ambient music on/off",
+ "موسیقی محیطی روشن": "Ambient music on",
+ "موسیقی محیطی": "Ambient music",
+ "موسیقی": "Music",
+ "ناشناس": "Anonymous",
+ "نامشخص": "Unknown",
+ "نشان جدید:": "New badge:",
+ "نشان‌ها": "Badges",
+ "نوار HUD": "HUD bar",
+ "نکته:": "Tip:",
+ "نگهداری داده الان اجرا شود؟ داده‌های قدیمی و موقت پاک می‌شوند.": "Run data retention now? Old and temporary data will be deleted.",
+ "هدف ثبت شد": "Target saved",
+ "هدف": "Target",
+ "هدف‌گیر ۱۵": "Marksman 15",
+ "هدف‌گیر ۲۵": "Marksman 25",
+ "هر روز صندوق را باز کن": "Open the chest every day",
+ "هر ۱۵ ثانیه خودکار به‌روز می‌شود •": "Auto-refreshes every 15 seconds •",
+ "هشدار؛ میانگین": "Warning; average",
+ "هفته": "week",
+ "هفتگی": "Weekly",
+ "همه تاریخچه و تنظیمات پاک شود؟": "Clear all history and settings?",
+ "همه داده‌ها پاک شد": "All data cleared",
+ "همه ماموریت‌ها انجام شد": "All missions done",
+ "همه چیز برای برتری در رنکد": "Everything for ranked dominance",
+ "همه‌ی کاربران ربات": "All bot users",
+ "همه‌ی کاربران": "All users",
+ "هنوز اقدامی ثبت نشده": "No actions logged yet",
+ "هنوز داده پینگ ندارید": "No ping data yet",
+ "هنوز داده‌ای نیست": "No data yet",
+ "هنوز دستاوردی نداری": "No achievements yet",
+ "هنوز دعوتی ثبت نشده": "No referrals yet",
+ "هنوز سروری ستاره نزدی": "No starred servers yet",
+ "هنوز فعالیتی نیست": "No activity yet",
+ "هنوز مچی ثبت نشده": "No matches logged yet",
+ "هنوز پیامی ارسال نشده": "No messages sent yet",
+ "هنوز کاربری نیست": "No users yet",
+ "هنوز کانفیگی روی این حساب ثبت نشده": "No configs on this account yet",
+ "هنوز کانفیگی ساخته نشده": "No configs created yet",
+ "هیچ‌وقت اشتراک نگرفته": "Never subscribed",
+ "وای‌فای/دیتا پایدار است": "Wi-Fi/data is stable",
+ "ورود با رمز": "Sign in with password",
+ "وصل شد.": "Connected.",
+ "پاداش امروز": "Today's reward",
+ "پاسخ به کاربر": "Reply to user",
+ "پاک کردن": "Clear",
+ "پایان فصل": "Season end",
+ "پرداخت": "Payment",
+ "پرک ۱": "Perk 1",
+ "پرک ۲": "Perk 2",
+ "پرک ۳": "Perk 3",
+ "پرکاربردترین کشورها و حالت‌ها": "Most used countries and modes",
+ "پریست بتل‌رویال": "Battle Royale preset",
+ "پریست رنکد حرفه‌ای": "Pro ranked preset",
+ "پریست کم‌پینگ": "Low-ping preset",
+ "پشتیبان شامل کاربران، اشتراک‌ها، رسیدها و تیکت‌هاست؛ کلید کانفیگ، سشن یا توکن ورود در آن نیست. فایل را امن نگه دار.": "The backup includes users, subscriptions, receipts and tickets; config keys, sessions or login tokens are not included. Keep the file safe.",
+ "پشتیبانی:": "Support:",
+ "پشتیبانی": "Support",
+ "پیش‌نمایش": "Preview",
+ "پینگ تست شد": "Ping tested",
+ "پینگ را تست کن": "Test ping",
+ "ژاپن": "Japan",
+ "ژنرال": "General",
+ "کاربر جدید": "New user",
+ "کاربر فعال امروز": "Active user today",
+ "کاربر کد رو توی ربات با /code وارد می‌کنه. تأیید رسید و پلن‌ها هم از طریق ربات انجام می‌شه.": "Users enter codes in the bot with /code. Receipt approval and plans are also handled through the bot.",
+ "کاربر": "User",
+ "کاربران ربات": "Bot users",
+ "کاربران": "Users",
+ "کانفیگ IMRC CODM Pro": "IMRC CODM Pro config",
+ "کانفیگ آماده است": "Config ready",
+ "کانفیگ امروز": "Configs today",
+ "کانفیگ به‌ازای کاربر": "Configs per user",
+ "کانفیگ خالی است.": "Config is empty.",
+ "کانفیگ ساخته‌شده در ۱۴ روز اخیر": "Configs created in the last 14 days",
+ "کانفیگ •": "Config •",
+ "کانفیگ": "Config",
+ "کد مخفی فعال شد: +۱۰۰ XP": "Secret code activated: +100 XP",
+ "کدی ساخته نشده": "No codes created",
+ "کره": "South Korea",
+ "کل بازدیدها": "Total visits",
+ "کل فعالیت‌ها": "Total activity",
+ "کل پرداخت‌های تأییدشده": "Total approved payments",
+ "کل کاربران": "Total users",
+ "کل کانفیگ‌ها": "Total configs",
+ "کم‌پینگ": "Low ping",
+ "کند / ناپایدار": "Slow / unstable",
+ "کند": "Slow",
+ "گرم‌کردن ۵ دقیقه": "5-minute warm-up",
+ "گروهبان": "Sergeant",
+ "گیرنده‌ها": "Recipients",
+ "یادداشت ذخیره شد": "Note saved",
+ "یک کانفیگ بساز": "Build a config",
+ "۱. حالت بازی را انتخاب کن": "1. Choose the game mode",
+ "۱۰ دقیقه استراحت": "10-minute break",
+ "۱۰ مچ": "10 matches",
+ "۱۰ کانفیگ": "10 configs",
+ "۲. کشور با پینگ مناسب انتخاب کن": "2. Pick a country with good ping",
+ "۳ روز پیاپی": "3 days in a row",
+ "۳ مچ رنکد بازی کن": "Play 3 ranked matches",
+ "۳. از پریست یا یک‌کلیک استفاده کن": "3. Use a preset or one-click",
+ "۴. ساخت و دانلود را بزن": "4. Tap build & download",
+ "۵ صندوق": "5 chests",
+ "۵ کانفیگ": "5 configs",
+ "۵. در تب کالاف نقش و سبک را تنظیم کن": "5. Set the role and style in the CODM tab",
+ "۷ روز پیاپی": "7 days in a row",
+ "• همه‌امکانات": "• All features",
+ "• 🔒 بقیه‌ی کشورها، DNS های دیگه و MTU دلخواه مخصوص اشتراکه": "• 🔒 Other countries, more DNS options and custom MTU are for subscribers",
+ "⏰ وقت استراحت است؛ چند دقیقه چشم‌ها را رها کنید": "⏰ Break time; rest your eyes for a few minutes",
+ "⏱ آپ‌تایم و حوادث": "⏱ Uptime & incidents",
+ "⏳ اعتبار تا:": "⏳ Valid until:",
+ "⏳ هنوز نرسیده": "⏳ Not arrived yet",
+ "⚙️ سقف اختصاصی:": "⚙️ Custom limit:",
+ "⚙️ محدودیت و اشتراک": "⚙️ Limits & subscription",
+ "⚠️ دانلود خودکار نشد — از دکمه کپی استفاده کن": "⚠️ Auto-download failed — use the copy button",
+ "⚠️ یک کشور انتخاب کن!": "⚠️ Choose a country!",
+ "⚡ ساخت سریع": "⚡ Quick build",
+ "⚡ کم‌پینگ": "⚡ Low ping",
+ "⛶ تمام‌صفحه": "⛶ Fullscreen",
+ "✅ اشتراک فعال شد و به کاربر پیام تلگرام رفت.": "✅ Subscription activated and a Telegram message was sent to the user.",
+ "✅ اعلان‌ها فعال شد": "✅ Notifications enabled",
+ "✅ ثبت و اشتراک فعال شد": "✅ Recorded and subscription activated",
+ "✅ ذخیره شد.": "✅ Saved.",
+ "✅ ربات @": "✅ Bot @",
+ "✅ رسیده": "✅ Arrived",
+ "✅ رفع مسدودی": "✅ Unban",
+ "✅ کانفیگ دانلود شد:": "✅ Config downloaded:",
+ "✅ کپی شد!": "✅ Copied!",
+ "❌ خروج انجام نشد، دوباره امتحان کن": "❌ Logout failed, try again",
+ "❌ خطا در اتصال": "❌ Connection error",
+ "❌ دانلود ناموفق — از دکمه «کل کانفیگ» کپی کن": "❌ Download failed — copy using “Copy full config”",
+ "❌ رمز اشتباه است!": "❌ Wrong password!",
+ "❌ فعال‌سازی اعلان انجام نشد": "❌ Couldn't enable notifications",
+ "❌ کپی نشد": "❌ Not copied",
+ "❓ راهنما": "❓ Help",
+ "⭐ اشتراک تا": "⭐ Subscription until",
+ "⭐ اضافه شد": "⭐ Added",
+ "⭐ افزودن اشتراک": "⭐ Add subscription",
+ "⭐ خرید اشتراک": "⭐ Buy subscription",
+ "⭐ علاقه‌مندی‌ها": "⭐ Favorites",
+ "🇹🇷 ترکیه مستر": "🇹🇷 Turkey Master",
+ "🌓 تغییر تم": "🌓 Change theme",
+ "🎁 کیف پول اعتبار دعوت": "🎁 Referral credit wallet",
+ "🎟 کدهای تخفیف": "🎟 Discount codes",
+ "🎫 تیکت‌های پشتیبانی": "🎫 Support tickets",
+ "🎯 اولین کانفیگ": "🎯 First config",
+ "🎯 بهینه‌سازی یک‌کلیکی کالاف": "🎯 One-click CODM optimization",
+ "🎯 مناسب کالاف": "🎯 CODM-ready",
+ "🎯 یک‌کلیک بهینه کالاف": "🎯 One-click CODM optimize",
+ "🏆 برترین دعوت‌کننده‌ها": "🏆 Top referrers",
+ "🏆 رنکر": "🏆 Ranker",
+ "💪 ۱۰ کانفیگ": "💪 10 configs",
+ "💵 ثبت پرداخت نقدی یا دستی": "💵 Record a cash or manual payment",
+ "💾 پشتیبان و نگهداری داده": "💾 Backup & data retention",
+ "📈 درآمد": "📈 Revenue",
+ "📊 شاخص‌های رشد": "📊 Growth metrics",
+ "📊 پنل مدیریت IMRC": "📊 IMRC admin panel",
+ "📋 کپی شماره کارت": "📋 Copy card number",
+ "📋 کپی کل کانفیگ": "📋 Copy full config",
+ "📣 پیام همگانی به کاربران ربات": "📣 Broadcast to bot users",
+ "📥 خروجی اکسل": "📥 Excel export",
+ "📶 تست پینگ زنده": "📶 Live ping test",
+ "🔐 پنل مدیریت IMRC": "🔐 IMRC admin panel",
+ "🔒 مخصوص اشتراک": "🔒 Subscribers only",
+ "🔓 کشورهای رایگان:": "🔓 Free countries:",
+ "🔔 اعلان یادآوری و پرداخت": "🔔 Reminder & payment alerts",
+ "🔥 آماده نبرد!": "🔥 Ready for battle!",
+ "🔥 ۵ کانفیگ": "🔥 5 configs",
+ "🔴 اینترنت قطع شد": "🔴 Internet lost",
+ "🔴 پینگ بالا": "🔴 High ping",
+ "🚀 ساخت و دانلود کانفیگ": "🚀 Build & download config",
+ "🚫 مسدود کردن": "🚫 Ban",
+ "🚫 مسدود": "🚫 Banned",
+ "🟡 سرور قابل قبول": "🟡 Acceptable server",
+ "🟢 اینترنت وصل شد": "🟢 Internet back",
+ "🟢 سرور عالی و پایدار": "🟢 Excellent, stable server",
+ "🟢 وارد پنل شد": "🟢 Signed in",
+ "🤖 اتصال ربات": "🤖 Connect bot",
+ "🧰 تب ابزارها": "🧰 Tools tab",
+ "🧹 اجرای نگهداری الان": "🧹 Run retention now",
+ "🧾 گزارش فعالیت ادمین": "🧾 Admin activity log",
+ "+۶۰ XP": "+60 XP",
+ "۱۰۰ XP": "100 XP",
+ "AllowedIPs ندارد (اختیاری)": "No AllowedIPs (optional)",
+ "آیدی و مبلغ (غیرصفر) رو وارد کن": "Enter the Telegram ID and a non-zero amount",
+ "این حادثه حذف شود؟": "Delete this incident?",
+ "این‌ها مقدار پیش‌فرض همه‌ی کاربرانه. سهمیه ساعت ۰۰:۰۰ به وقت ایران ریست می‌شه (هفته از شنبه، ماه شمسی). برای یک کاربر خاص، از لیست پایین دکمه": "These are the defaults for all users. Quotas reset at 00:00 Tehran time (weeks start Saturday, months are Jalali). For a specific user, use the list below.",
+ "تعداد روز (فقط برای افزودن اشتراک)": "Days (only for adding a subscription)",
+ "توضیح برای کاربران (اختیاری؛ تگ HTML نمایش داده نمی‌شه)": "Note for users (optional; HTML tags are not shown)",
+ "جدید (۷ روز اخیر)": "New (last 7 days)",
+ "در هر هفته (از شنبه)": "per week (from Saturday)",
+ "درآمد (تومان)": "Revenue (toman)",
+ "درآمد امروز (تومان)": "Revenue today (toman)",
+ "درآمد این ماه (تومان)": "Revenue this month (toman)",
+ "درآمد ۳۰ روز اخیر (هزار تومان)": "Revenue, last 30 days (thousand toman)",
+ "دلیل (مثلاً: جبران خطا)": "Reason (e.g. error compensation)",
+ "دلیل مسدودسازی (اختیاری)": "Ban reason (optional)",
+ "دلیل مسدودی (اختیاری):": "Ban reason (optional):",
+ "عنوان حادثه (مثلاً: اختلال در دریافت کانفیگ)": "Incident title (e.g. config delivery problem)",
+ "غیرفعال (بیش از ۳۰ روز)": "Inactive (more than 30 days)",
+ "فعال (همه‌چیز عادیه)": "Active (all normal)",
+ "متن پرداخت (شماره کارت و...) — در پیام خرید ربات نمایش داده می‌شه": "Payment text (card number, etc.) — shown in the bot purchase message",
+ "متن پیام (حداکثر ۳۵۰۰ کاراکتر، متن ساده)": "Message text (max 3500 characters, plain text)",
+ "مدت اعتبار این سقف (روز)": "Duration of this limit (days)",
+ "همه‌ی امکانات پولی (کشورها، DNS، MTU) باز باشه": "All paid features (countries, DNS, MTU) unlocked",
+ "هنوز اجرا نشده (هر روز ساعت ۰۴:۰۰ به وقت تهران)": "Not run yet (daily at 04:00 Tehran time)",
+ "وضعیت سرویس (صفحه‌ی عمومی /status)": "Service status (public /status page)",
+ "پلن‌های اشتراک (هر خط: کلید|نام|روز|قیمت به تومان — مثلاً m|ماهانه|30|150000)": "Subscription plans (one per line: key|name|days|price in toman — e.g. m|Monthly|30|150000)",
+ "پیام خرید اشتراک (وقتی سقف تموم شد نشون داده می‌شه — آیدی تلگرام یا راه پرداخت رو اینجا بنویس)": "Purchase message (shown when the limit is reached — write your Telegram ID or payment method here)",
+ "پیام وضعیت برای کاربران (اختیاری، حداکثر ۲۰۰ کاراکتر — وقتی خالی باشه و وضعیت فعال باشه، نمایش داده نمی‌شه)": "Status message for users (optional, max 200 characters — if empty while a status is active, nothing is shown)",
+ "چند روز اشتراک فعال بشه؟ (مثلاً 30)": "How many days should the subscription be active? (e.g. 30)",
+ "کد (انگلیسی و عدد)": "Code (letters and numbers)",
+ "کشورهای رایگان (کد دو حرفی با ویرگول، مثل tr,de,ae)": "Free countries (two-letter codes separated by commas, e.g. tr,de,ae)",
+ "کل درآمد (تومان)": "Total revenue (toman)",
+ "کلید پلن (مثلاً m)": "Plan key (e.g. m)",
+ "گزارش ماهانه (شمسی)": "Monthly report (Jalali)",
+ "یادداشت (مثلاً: کارت به کارت دستی)": "Note (e.g. manual card transfer)",
+ "⚠️ ذخیره شد ولی به کاربر نرسید (احتمالاً ربات رو بلاک کرده).": "⚠️ Saved, but not delivered to the user (they probably blocked the bot).",
+ "👥 عملیات گروهی (روی نتیجه‌ی فیلتر و جستجوی بالا)": "👥 Bulk actions (on the current filter and search results)",
+ "📥 دانلود پشتیبان (JSON)": "📥 Download backup (JSON)",
+ "📥 همه‌ی رسیدها (اکسل)": "📥 All receipts (Excel)",
+ "📥 گزارش ماهانه (اکسل)": "📥 Monthly report (Excel)",
+ "🤖 ورود با تلگرام (ادمین)": "🤖 Sign in with Telegram (admin)"
 };
   const ATTRS = ["placeholder", "aria-label", "title"];
   const norm = s => String(s).replace(/\s+/g, " ").trim();
-  const origText = new WeakMap();
-  const origAttr = new WeakMap();
+  const origText = new WeakMap();   // text node -> original (Persian) text
+  const lastText = new WeakMap();   // text node -> value this script last wrote
+  const origAttr = new WeakMap();   // element -> { attr: original }
+  const lastAttr = new WeakMap();   // element -> { attr: value this script last wrote }
+  let en = false;
+  let obs = null;
 
-  function textNodes(){
-    const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+  // A text node changed by page code (not by us) becomes the new original.
+  function fixText(n){
+    const cur = n.nodeValue;
+    if (lastText.get(n) !== cur) origText.set(n, cur);
+    const orig = origText.get(n);
+    if (orig === undefined) return;
+    const key = norm(orig);
+    let v = orig;
+    if (en && key && DICT[key]) {
+      const lead = orig.match(/^\s*/)[0], trail = orig.match(/\s*$/)[0];
+      v = lead + DICT[key] + trail;
+    }
+    if (cur !== v) n.nodeValue = v;   // write only on change, so the observer does not loop
+    lastText.set(n, v);
+  }
+
+  function fixAttrs(el){
+    for (const a of ATTRS) {
+      if (!el.hasAttribute(a)) continue;
+      const cur = el.getAttribute(a);
+      let o = origAttr.get(el); if (!o) { o = {}; origAttr.set(el, o); }
+      let l = lastAttr.get(el); if (!l) { l = {}; lastAttr.set(el, l); }
+      if (l[a] !== cur || !(a in o)) o[a] = cur;
+      const key = norm(o[a]);
+      const v = en && DICT[key] ? DICT[key] : o[a];
+      if (cur !== v) el.setAttribute(a, v);
+      l[a] = v;
+    }
+  }
+
+  function fixTree(root){
+    if (!root) return;
+    if (root.nodeType === 3) { fixText(root); return; }
+    if (root.nodeType !== 1) return;
+    if (root.nodeName === "SCRIPT" || root.nodeName === "STYLE") return;
+    fixAttrs(root);
+    for (const el of root.querySelectorAll("*")) fixAttrs(el);
+    const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
       acceptNode(n){
         const p = n.parentNode;
         return p && p.nodeName !== "SCRIPT" && p.nodeName !== "STYLE" ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
@@ -212,41 +719,43 @@
     });
     const list = [];
     while (w.nextNode()) list.push(w.currentNode);
-    return list;
+    for (const n of list) fixText(n);
   }
 
-  function apply(en){
-    for (const n of textNodes()) {
-      if (!origText.has(n)) origText.set(n, n.nodeValue);
-      const orig = origText.get(n);
-      const key = norm(orig);
-      if (en && key && DICT[key]) {
-        const lead = orig.match(/^\s*/)[0], trail = orig.match(/\s*$/)[0];
-        n.nodeValue = lead + DICT[key] + trail;
-      } else {
-        n.nodeValue = orig;
+  function watch(){
+    if (obs || !document.body) return;
+    obs = new MutationObserver(recs => {
+      if (!en) return;
+      for (const r of recs) {
+        if (r.type === "characterData") fixText(r.target);
+        else if (r.type === "attributes") fixAttrs(r.target);
+        else for (const n of r.addedNodes) fixTree(n);
       }
-    }
-    for (const el of document.querySelectorAll("*")) {
-      for (const a of ATTRS) {
-        if (!el.hasAttribute(a)) continue;
-        let o = origAttr.get(el);
-        if (!o) { o = {}; origAttr.set(el, o); }
-        if (!(a in o)) o[a] = el.getAttribute(a);
-        const key = norm(o[a]);
-        el.setAttribute(a, en && DICT[key] ? DICT[key] : o[a]);
-      }
-    }
+    });
+    obs.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ATTRS });
+  }
+
+  function apply(on){
+    en = on;
+    if (obs) { obs.disconnect(); obs = null; }
+    fixTree(document.documentElement);
+    if (en) watch();
   }
 
   function setLang(l){
-    const en = l === "en";
-    localStorage.setItem("IMRC_lang", en ? "en" : "fa");
-    document.documentElement.lang = en ? "en" : "fa";
-    document.documentElement.dir = en ? "ltr" : "rtl";
-    apply(en);
-    const b = document.getElementById("langToggle");
-    if (b) b.textContent = en ? "فارسی" : "English";
+    const on = l === "en";
+    localStorage.setItem("IMRC_lang", on ? "en" : "fa");
+    document.documentElement.lang = on ? "en" : "fa";
+    document.documentElement.dir = on ? "ltr" : "rtl";
+    apply(on);
+    for (const b of document.querySelectorAll("#langToggle, [data-lang-toggle]")) b.textContent = on ? "فارسی" : "English";
+  }
+
+  // Native dialogs are not DOM text, so translate their message when English is on.
+  const trMsg = m => { const k = norm(m); return en && DICT[k] ? DICT[k] : m; };
+  for (const f of ["alert", "confirm", "prompt"]) {
+    const native = window[f];
+    if (typeof native === "function") window[f] = function(m, ...rest){ return native.call(window, trMsg(m), ...rest); };
   }
 
   window.toggleLang = function(){ setLang(document.documentElement.lang === "en" ? "fa" : "en"); };

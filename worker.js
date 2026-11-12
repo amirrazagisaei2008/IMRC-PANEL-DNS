@@ -93,11 +93,24 @@ function getDB(env) {
           id INTEGER PRIMARY KEY AUTOINCREMENT, ticket_id INTEGER, sender TEXT, text TEXT, ts INTEGER, admin_msg_id INTEGER)`),
         env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_ticket_msgs_t ON ticket_msgs(ticket_id)"),
         env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_ticket_msgs_admin ON ticket_msgs(admin_msg_id)"),
+        env.DB.prepare("CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, actor TEXT, action TEXT, target TEXT, detail TEXT)"),
+        env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts)"),
+        env.DB.prepare("CREATE TABLE IF NOT EXISTS rate_limits(k TEXT PRIMARY KEY, n INTEGER, win INTEGER)"),
         env.DB.prepare(`CREATE TABLE IF NOT EXISTS broadcasts(
           id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT, target TEXT, status TEXT,
           total INTEGER, sent INTEGER DEFAULT 0, failed INTEGER DEFAULT 0, cursor TEXT DEFAULT '',
           created INTEGER, finished INTEGER)`),
+        env.DB.prepare("CREATE TABLE IF NOT EXISTS uptime_samples(ts INTEGER PRIMARY KEY, ok INTEGER)"),
+        env.DB.prepare("CREATE TABLE IF NOT EXISTS incidents(id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, level TEXT, body TEXT, started INTEGER, resolved INTEGER)"),
+        env.DB.prepare("CREATE TABLE IF NOT EXISTS wallet(tg_id TEXT PRIMARY KEY, balance INTEGER DEFAULT 0)"),
+        env.DB.prepare("CREATE TABLE IF NOT EXISTS wallet_log(id INTEGER PRIMARY KEY AUTOINCREMENT, tg_id TEXT, ts INTEGER, delta INTEGER, reason TEXT)"),
+        env.DB.prepare("CREATE TABLE IF NOT EXISTS push_subs(endpoint TEXT PRIMARY KEY, tg_id TEXT, p256dh TEXT, auth TEXT, created INTEGER)"),
+        env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_push_tg ON push_subs(tg_id)"),
       ]);
+      // ستون‌های جدید روی جدول‌های قبلی (اگه از قبل باشن خطا می‌ده و نادیده گرفته می‌شه)
+      for (const sql of ["ALTER TABLE pending_buy ADD COLUMN use_wallet INTEGER DEFAULT 0", "ALTER TABLE receipts ADD COLUMN wallet_used INTEGER DEFAULT 0"]) {
+        try { await env.DB.prepare(sql).run(); } catch (e) { /* already exists */ }
+      }
       for (const col of ["tg_id", "tg_name", "tg_username"]) {
         try { await env.DB.prepare(`ALTER TABLE visitors ADD COLUMN ${col} TEXT`).run(); } catch (e) { /* already exists */ }
       }
@@ -178,10 +191,12 @@ const JOIN_KB = (token) => ({
 });
 
 /* ---------------- /api/auth/* ---------------- */
-async function authStart(env) {
+async function authStart(env, request) {
   if (!env.BOT_TOKEN) return json({ error: "BOT_TOKEN تنظیم نشده" }, 500);
   const db = await getDB(env);
   const now = Date.now();
+  const ipKey = "auth:" + (await sha(request.headers.get("CF-Connecting-IP") || "none"));
+  if (!(await rateOk(db, ipKey, 20, 60000))) return json({ error: "rate", message: "درخواست ورود زیاد شد؛ یک دقیقه صبر کن." }, 429);
   const token = randHex(12);
   await db.batch([
     db.prepare("DELETE FROM login_tokens WHERE created<?").bind(now - 3600000),
@@ -301,9 +316,9 @@ async function handleText(env, db, msg, text) {
   m = text.match(/^\/start\s+ref_(\d{3,20})$/);
   if (m) {
     await recordReferral(db, tgId, m[1]).catch(() => {});
-    return reply(WELCOME, { reply_markup: MAIN_KB });
+    return reply(await welcomeText(db), { reply_markup: MAIN_KB });
   }
-  if (/^\/start(\s|$)/.test(text)) return reply(WELCOME, { reply_markup: MAIN_KB });
+  if (/^\/start(\s|$)/.test(text)) return reply(await welcomeText(db), { reply_markup: MAIN_KB });
   if (/^\/plans(\s|$)/.test(text)) return sendPlans(env, db, chatId);
   if (/^\/invite(\s|$)/.test(text)) return sendInvite(env, db, chatId, tgId);
   m = text.match(/^\/code(?:\s+(\S+))?$/i);
@@ -328,6 +343,8 @@ async function handleCallback(env, db, cq) {
   if (data === "menu:support") { await answer(); return tg(env, "sendMessage", { chat_id: chatId, text: SUPPORT_HELP }).catch(() => {}); }
   const buy = data.match(/^buy:([a-z0-9_]{1,16})$/);
   if (buy) { await answer(); return choosePlan(env, db, chatId, String(cq.from.id), buy[1]); }
+  const wal = data.match(/^wal:([01])$/);
+  if (wal) { await answer(); return setWallet(env, db, chatId, String(cq.from.id), wal[1] === "1"); }
   const dec = data.match(/^(rc|rj):(\d{1,12})(?::([a-z0-9_]{1,16}))?$/);
   if (dec) return adminDecide(env, db, cq, dec[1], Number(dec[2]), dec[3] || "", answer);
   await answer();
@@ -351,13 +368,18 @@ async function onFirstLogin(env, db, tgId) {
   await db.prepare("UPDATE refs SET rewarded=1 WHERE invitee=?").bind(tgId).run();
   const st = await getSettings(db);
   const known = await db.prepare("SELECT 1 x FROM users WHERE tg_id=?").bind(ref.referrer).first();
-  if (!known || st.ref_days <= 0) return;
-  const until = await grantSub(db, ref.referrer, st.ref_days);
-  const when = new Date(until).toLocaleDateString("fa-IR", { timeZone: "Asia/Tehran" });
-  await tg(env, "sendMessage", {
-    chat_id: ref.referrer,
-    text: `🎁 یکی از دوستانت با لینکت وارد پنل شد! ${fa(st.ref_days)} روز اشتراک رایگان گرفتی.\nاعتبار اشتراکت تا ${when}`,
-  }).catch(() => {});
+  if (!known) return;
+  const lines = ["🎁 یکی از دوستانت با لینکت وارد پنل شد!"];
+  if (st.ref_days > 0) {
+    const until = await grantSub(db, ref.referrer, st.ref_days);
+    const when = new Date(until).toLocaleDateString("fa-IR", { timeZone: "Asia/Tehran" });
+    lines.push(`${fa(st.ref_days)} روز اشتراک رایگان گرفتی. اعتبار اشتراکت تا ${when}`);
+  }
+  if (st.ref_credit > 0) {
+    const bal = await walletCredit(db, ref.referrer, st.ref_credit, "پاداش دعوت");
+    lines.push(`💳 ${fa(st.ref_credit)} تومان اعتبار به کیف پولت اضافه شد (موجودی: ${fa(bal)} تومان).`);
+  }
+  if (lines.length > 1) await tg(env, "sendMessage", { chat_id: ref.referrer, text: lines.join("\n") }).catch(() => {});
 }
 
 async function recordReferral(db, invitee, referrer) {
@@ -414,7 +436,8 @@ async function choosePlan(env, db, chatId, tgId, key) {
     .bind(tgId, key, Date.now()).run();
   const row = await pendingCode(db, tgId);
   const price = priceAfter(plan, row);
-  return reply(`✅ پلن «${plan.name}» (${fa(plan.days)} روز) انتخاب شد.\n💰 مبلغ: ${fa(price)} تومان${row ? ` (با کد ${row.code})` : ""}\n\n${st.pay_text}\n\nبعد از پرداخت، عکس رسید رو همین‌جا بفرست.`);
+  await reply(`✅ پلن «${plan.name}» (${fa(plan.days)} روز) انتخاب شد.\n💰 مبلغ: ${fa(price)} تومان${row ? ` (با کد ${row.code})` : ""}\n\n${st.pay_text}\n\nبعد از پرداخت، عکس رسید رو همین‌جا بفرست.`);
+  return walletOffer(env, db, chatId, tgId, plan, row);
 }
 
 async function applyCode(env, db, chatId, tgId, raw) {
@@ -438,14 +461,15 @@ async function handleReceipt(env, db, msg) {
   if (open.n >= 3) return reply("⏳ سه رسید قبلی‌ت هنوز بررسی نشدن. لطفاً صبر کن.");
 
   const st = await getSettings(db);
-  const pend = await db.prepare("SELECT plan,code FROM pending_buy WHERE tg_id=? AND ts>?").bind(tgId, Date.now() - PENDING_MS).first();
+  const pend = await db.prepare("SELECT plan,code,use_wallet FROM pending_buy WHERE tg_id=? AND ts>?").bind(tgId, Date.now() - PENDING_MS).first();
   const plan = pend && pend.plan ? st.plans.find((p) => p.key === pend.plan) || null : null;
   const codeRow = await pendingCode(db, tgId);
   const amount = plan ? priceAfter(plan, codeRow) : null;
+  const walletUsed = plan && pend.use_wallet ? Math.min(await walletBalance(db, tgId), amount) : 0;
   const photo = msg.photo[msg.photo.length - 1];
 
-  const ins = await db.prepare("INSERT INTO receipts(tg_id,ts,file_id,plan,amount,code,status) VALUES(?,?,?,?,?,?,'pending')")
-    .bind(tgId, Date.now(), photo.file_id, plan ? plan.key : null, amount, codeRow ? codeRow.code : null).run();
+  const ins = await db.prepare("INSERT INTO receipts(tg_id,ts,file_id,plan,amount,code,status,wallet_used) VALUES(?,?,?,?,?,?,'pending',?)")
+    .bind(tgId, Date.now(), photo.file_id, plan ? plan.key : null, amount, codeRow ? codeRow.code : null, walletUsed).run();
   const id = ins.meta.last_row_id;
   await db.prepare("DELETE FROM pending_buy WHERE tg_id=?").bind(tgId).run();
 
@@ -476,6 +500,7 @@ async function adminDecide(env, db, cq, action, id, planKey, answer) {
   if (action === "rj") {
     const res = await db.prepare("UPDATE receipts SET status='rejected', decided=?, decided_by=? WHERE id=? AND status='pending'").bind(now, by, id).run();
     if (!res.meta.changes) return answer("قبلاً بررسی شده.");
+    await audit(db, "tg:" + by, "receipt_reject", String(rec.tg_id), "رسید #" + id);
     await tg(env, "sendMessage", { chat_id: rec.tg_id, text: "❌ رسیدت تأیید نشد. اگه فکر می‌کنی اشتباهه، به @IMRC_support پیام بده." }).catch(() => {});
     await stampReceipt(env, cq, "❌ رد شد");
     return answer("رد شد.");
@@ -485,17 +510,23 @@ async function adminDecide(env, db, cq, action, id, planKey, answer) {
   const plan = st.plans.find((p) => p.key === planKey);
   if (!plan) return answer("پلن نامعتبره.");
   // مبلغ ثبت‌شده‌ی رسید فقط وقتی معتبره که همون پلنی باشه که ادمین تأیید می‌کنه؛ وگرنه قیمت پلن تأییدشده (با کد) حساب می‌شه
-  const amount = rec.amount !== null && rec.plan === plan.key ? rec.amount : priceAfter(plan, await activeCode(db, rec.code));
+  const gross = rec.amount !== null && rec.plan === plan.key ? rec.amount : priceAfter(plan, await activeCode(db, rec.code));
+  // اعتبار کیف پول: فقط موقع تأیید کم می‌شه (رد شدن رسید اعتبار رو دست‌نخورده نگه می‌داره)
+  const applied = Math.min(rec.wallet_used || 0, gross, await walletBalance(db, rec.tg_id));
+  const amount = gross - applied;
   const res = await db.prepare("UPDATE receipts SET status='approved', plan=?, amount=?, decided=?, decided_by=? WHERE id=? AND status='pending'")
     .bind(plan.key, amount, now, by, id).run();
   if (!res.meta.changes) return answer("قبلاً بررسی شده.");
+  if (applied > 0) await walletDebit(db, rec.tg_id, applied, `رسید #${id}`);
+  await audit(db, "tg:" + by, "receipt_approve", String(rec.tg_id), `${plan.key} ${amount}${applied ? " • اعتبار " + applied : ""}`);
   if (rec.code) await db.prepare("UPDATE discount_codes SET used=used+1 WHERE code=? AND (max_uses=0 OR used<max_uses)").bind(rec.code).run();
   const until = await grantSub(db, rec.tg_id, plan.days);
   const when = new Date(until).toLocaleDateString("fa-IR", { timeZone: "Asia/Tehran" });
   await tg(env, "sendMessage", {
     chat_id: rec.tg_id,
-    text: `⭐ پرداختت تأیید شد!\nپلن ${plan.name}: ${fa(plan.days)} روز اشتراک.\nاعتبار تا ${when}\n\nحالا برگرد به پنل و کانفیگ بساز.`,
+    text: fill(st.msg_approved, { plan: plan.name, days: fa(plan.days), date: when }),
   }).catch(() => {});
+  await sendPush(env, db, rec.tg_id, { title: "✅ پرداخت تأیید شد", body: `پلن ${plan.name}: ${fa(plan.days)} روز اشتراک`, url: "/" }).catch(() => {});
   await stampReceipt(env, cq, `✅ تأیید شد: ${plan.name} (${fa(plan.days)} روز)`);
   return answer("اشتراک فعال شد ✅");
 }
@@ -521,10 +552,14 @@ const DEFAULTS = {
   pay_text: "💳 شماره کارت: 6219 8614 9829 6879\n👤 به نام: امیر رزاقی ساعی (بانک سامان)",
   plans: "w|هفتگی|7|50000\nm|ماهانه|30|150000\nq|سه‌ماهه|90|400000",
   ref_days: "2",
+  ref_credit: "0",
   remind_days: "3",
   admin_notify: "1",
   status_level: "ok",
   status_note: "",
+  msg_welcome: "",
+  msg_reminder: "⏰ اشتراکت {days} روز دیگه تموم می‌شه (تا {date}).\nبرای تمدید، /plans رو بفرست.",
+  msg_approved: "⭐ پرداختت تأیید شد!\nپلن {plan}: {days} روز اشتراک.\nاعتبار تا {date}\n\nحالا برگرد به پنل و کانفیگ بساز.",
 };
 const STATUS_LEVELS = new Set(["ok", "degraded", "down"]);
 const PLAN_KEY = /^[a-z0-9_]{1,16}$/;
@@ -562,10 +597,14 @@ async function getSettings(db) {
     buy_text: String(o.buy_text),
     pay_text: String(o.pay_text),
     ref_days: Math.min(365, Math.max(0, parseInt(o.ref_days) || 0)),
+    ref_credit: Math.min(10000000, Math.max(0, parseInt(o.ref_credit) || 0)),
     remind_days: Math.min(30, Math.max(0, parseInt(o.remind_days) || 0)),
     admin_notify: o.admin_notify !== "0",
     status_level: STATUS_LEVELS.has(o.status_level) ? o.status_level : "ok",
     status_note: String(o.status_note || "").slice(0, 200),
+    msg_welcome: String(o.msg_welcome || "").slice(0, 1000),
+    msg_reminder: String(o.msg_reminder || DEFAULTS.msg_reminder),
+    msg_approved: String(o.msg_approved || DEFAULTS.msg_approved),
     plans,
     plans_text: plansToText(plans),
   };
@@ -692,6 +731,7 @@ async function createConfig(request, env) {
   const db = await getDB(env);
   const now = Date.now();
   if (!(await isMember(env, db, sess.tg_id))) return json({ error: "join", message: `برای استفاده باید عضو کانال ${CHANNEL} باشی.` }, 403);
+  if (!(await rateOk(db, "cfg:" + String(sess.tg_id), 30, 60000))) return json({ error: "rate", message: "خیلی سریع درخواست دادی؛ چند ثانیه صبر کن." }, 429);
   const q = await quotaInfo(db, sess.tg_id);
   if (!q.unlock) {
     const locked = (what) => json({ error: "premium", message: `${what} مخصوص کاربران اشتراکه.\n\n${q.buy_text}` }, 403);
@@ -881,6 +921,7 @@ async function adminCodes(request, env) {
   const code = String(b.code || "").toUpperCase().replace(/[^A-Z0-9_-]/g, "");
   if (!/^[A-Z0-9_-]{3,32}$/.test(code)) return json({ error: "کد باید ۳ تا ۳۲ کاراکتر انگلیسی یا عدد باشه" }, 400);
   if (b.disable !== undefined) {
+    await audit(db, "admin", b.disable ? "code_disable" : "code_enable", code, "");
     await db.prepare("UPDATE discount_codes SET active=? WHERE code=?").bind(b.disable ? 0 : 1, code).run();
     return json({ ok: true });
   }
@@ -891,6 +932,7 @@ async function adminCodes(request, env) {
   try {
     await db.prepare("INSERT INTO discount_codes(code,percent,max_uses,used,expires,active,created) VALUES(?,?,?,0,?,1,?)")
       .bind(code, pct, max, exp, Date.now()).run();
+    await audit(db, "admin", "code_create", code, `${pct}% • سقف ${max || "∞"}`);
   } catch { return json({ error: "این کد قبلاً ساخته شده" }, 409); }
   return json({ ok: true, code });
 }
@@ -937,10 +979,12 @@ async function adminSub(request, env) {
   if (!/^[0-9]{3,20}$/.test(tgId) || !(days >= 0 && days <= 3650)) return json({ error: "ورودی نامعتبر" }, 400);
   const db = await getDB(env);
   if (days === 0) {
+    await audit(db, "admin", "sub_revoke", tgId, "");
     await db.prepare("DELETE FROM subs WHERE tg_id=?").bind(tgId).run();
     return json({ ok: true, until: null });
   }
   const until = await grantSub(db, tgId, days);
+  await audit(db, "admin", "sub_grant", tgId, `${days} روز`);
   if (env.BOT_TOKEN) {
     const when = new Date(until).toLocaleDateString("fa-IR", { timeZone: "Asia/Tehran" });
     await tg(env, "sendMessage", { chat_id: tgId, text: `⭐ اشتراکت فعال شد.\nتا تاریخ ${when} می‌تونی روزانه تا ${(await getSettings(db)).sub_limit} کانفیگ بسازی.` }).catch(() => {});
@@ -955,6 +999,7 @@ async function adminUserLimit(request, env) {
   if (!/^[0-9]{3,20}$/.test(tgId)) return json({ error: "ورودی نامعتبر" }, 400);
   const db = await getDB(env);
   if (b.reset) {
+    await audit(db, "admin", "limit_reset", tgId, "");
     await db.prepare("DELETE FROM user_limits WHERE tg_id=?").bind(tgId).run();
     return json({ ok: true });
   }
@@ -964,6 +1009,7 @@ async function adminUserLimit(request, env) {
     return json({ error: "تعداد، دوره یا مدت نامعتبر است" }, 400);
   const unlock = b.unlock ? 1 : 0;
   const until = days ? Date.now() + days * 86400000 : null;
+  await audit(db, "admin", "limit", tgId, `${lim} در ${PERIODS[period]}${unlock ? " + باز" : ""}${days ? " • " + days + " روز" : ""}`);
   await db.prepare(
     "INSERT INTO user_limits(tg_id,lim,period,unlock,until) VALUES(?,?,?,?,?) ON CONFLICT(tg_id) DO UPDATE SET lim=excluded.lim, period=excluded.period, unlock=excluded.unlock, until=excluded.until"
   ).bind(tgId, lim, period, unlock, until).run();
@@ -978,6 +1024,7 @@ async function adminBan(request, env) {
   const tgId = String(b.tg_id || "");
   if (!/^[0-9]{3,20}$/.test(tgId)) return json({ error: "ورودی نامعتبر" }, 400);
   const db = await getDB(env);
+  await audit(db, "admin", b.ban ? "ban" : "unban", tgId, b.ban ? clean(b.reason, 100) : "");
   if (b.ban) {
     await db.batch([
       db.prepare("INSERT INTO bans(tg_id,reason,ts) VALUES(?,?,?) ON CONFLICT(tg_id) DO UPDATE SET reason=excluded.reason, ts=excluded.ts").bind(tgId, clean(b.reason, 100), Date.now()),
@@ -1008,9 +1055,20 @@ async function adminSettings(request, env) {
   const stLevel = String(b.status_level || "ok");
   if (!STATUS_LEVELS.has(stLevel)) return json({ error: "وضعیت سرویس نامعتبره" }, 400);
   const stNote = String(b.status_note || "").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, "").trim().slice(0, 200);
+  const refCredit = b.ref_credit === undefined ? 0 : parseInt(b.ref_credit);
+  if (!(refCredit >= 0 && refCredit <= 10000000)) return json({ error: "اعتبار دعوت باید بین ۰ تا ۱۰٬۰۰۰٬۰۰۰ تومان باشه" }, 400);
+  const clr = (v, n) => String(v || "").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, "").trim().slice(0, n);
+  const msgWelcome = clr(b.msg_welcome, 1000);
+  const msgReminder = clr(b.msg_reminder, 1000) || DEFAULTS.msg_reminder;
+  const msgApproved = clr(b.msg_approved, 1000) || DEFAULTS.msg_approved;
   const db = await getDB(env);
   const up = (k, v) => db.prepare("INSERT INTO settings(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v").bind(k, v);
+  await audit(db, "admin", "settings", "", "تنظیمات بروزرسانی شد");
   await db.batch([
+    up("ref_credit", String(refCredit)),
+    up("msg_welcome", msgWelcome),
+    up("msg_reminder", msgReminder),
+    up("msg_approved", msgApproved),
     up("free_limit", String(fl)),
     up("sub_limit", String(sl)),
     up("free_countries", fc),
@@ -1119,12 +1177,14 @@ async function adminTicket(request, env, url) {
   const id = parseInt(b.id);
   if (!(id > 0)) return json({ error: "bad" }, 400);
   if (b.action === "close") {
+    await audit(db, "admin", "ticket_close", String(id), "");
     await db.prepare("UPDATE tickets SET status='closed', updated=? WHERE id=?").bind(Date.now(), id).run();
     return json({ ok: true });
   }
   if (b.action === "reply") {
     const text = String(b.text || "").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, "").trim();
     if (!text || text.length > 3500) return json({ error: "متن پاسخ باید بین ۱ تا ۳۵۰۰ کاراکتر باشه" }, 400);
+    await audit(db, "admin", "ticket_reply", String(id), text.slice(0, 80));
     const res = await ticketReply(env, db, id, text);
     if (res.error) return json({ error: res.error }, res.status);
     return json({ ok: true, delivered: res.delivered });
@@ -1151,8 +1211,10 @@ async function runReminders(env) {
     const when = new Date(r.until).toLocaleDateString("fa-IR", { timeZone: "Asia/Tehran" });
     const res = await tg(env, "sendMessage", {
       chat_id: r.tg_id,
-      text: `⏰ اشتراکت ${fa(days)} روز دیگه تموم می‌شه (تا ${when}).\nبرای تمدید، /plans رو بفرست.`,
+      text: fill(st.msg_reminder, { days: fa(days), date: when }),
+      reply_markup: { inline_keyboard: [[{ text: "💳 تمدید اشتراک", callback_data: "menu:plans" }]] },
     }).catch(() => ({ ok: false }));
+    if (res.ok) await sendPush(env, db, r.tg_id, { title: "⏰ یادآوری اشتراک", body: `اشتراکت ${fa(days)} روز دیگه تموم می‌شه`, url: "/" }).catch(() => {});
     if (res.error_code === 429) break;
     // موفق یا کاربر بلاکمون کرده → دیگه تکرار نشه
     if (res.ok || res.error_code === 403) {
@@ -1208,6 +1270,7 @@ async function adminBroadcasts(request, env) {
   let b;
   try { b = await request.json(); } catch { return json({ error: "bad" }, 400); }
   if (b.cancel) {
+    await audit(db, "admin", "broadcast_cancel", String(parseInt(b.id) || 0), "");
     await db.prepare("UPDATE broadcasts SET status='cancelled', finished=? WHERE id=? AND status='running'").bind(Date.now(), parseInt(b.id) || 0).run();
     return json({ ok: true });
   }
@@ -1218,6 +1281,7 @@ async function adminBroadcasts(request, env) {
   const a = audience(b.target, now, env.ADMIN_TG_ID);
   const cnt = await db.prepare(`SELECT COUNT(*) n FROM users WHERE ${a.sql}`).bind(...a.p).first();
   if (!cnt.n) return json({ error: "هیچ گیرنده‌ای برای این گروه نیست" }, 400);
+  await audit(db, "admin", "broadcast_create", b.target, `${cnt.n} گیرنده`);
   const res = await db.prepare("INSERT INTO broadcasts(text,target,status,total,sent,failed,cursor,created) VALUES(?,?, 'running',?,0,0,'',?)")
     .bind(text, b.target, cnt.n, now).run();
   return json({ ok: true, id: res.meta.last_row_id, total: cnt.n });
@@ -1429,19 +1493,530 @@ async function pageAsset(request, env, path) {
   return env.ASSETS.fetch(new Request(url.origin + path, { headers: request.headers }));
 }
 
+/* ---------------- ممیزی، محدودیت نرخ، نگهداری، عملیات گروهی (فاز ۵) ---------------- */
+const fill = (t, vars) => String(t).replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m));
+async function welcomeText(db) {
+  const st = await getSettings(db);
+  return st.msg_welcome || WELCOME;
+}
+
+// ثبت هر اقدام ادمین (بدون خطا بر اقدام اصلی)
+async function audit(db, actor, action, target, detail) {
+  await db.prepare("INSERT INTO audit_log(ts,actor,action,target,detail) VALUES(?,?,?,?,?)")
+    .bind(Date.now(), String(actor || "admin").slice(0, 40), String(action).slice(0, 40), String(target || "").slice(0, 80), String(detail || "").slice(0, 300))
+    .run().catch(() => {});
+}
+
+// true = مجاز؛ false = بیشتر از سقف در همین پنجره‌ی زمانی
+async function rateOk(db, key, limit, windowMs) {
+  const start = Math.floor(Date.now() / windowMs) * windowMs;
+  await db.prepare("INSERT INTO rate_limits(k,n,win) VALUES(?,1,?) ON CONFLICT(k) DO UPDATE SET n=CASE WHEN win=? THEN n+1 ELSE 1 END, win=?")
+    .bind(key, start, start, start).run();
+  const row = await db.prepare("SELECT n FROM rate_limits WHERE k=?").bind(key).first();
+  return !row || row.n <= limit;
+}
+
+// امنیت: هدرها برای همه‌ی پاسخ‌ها. CSP فعلاً Report-Only است چون پنل به Google/Cloudflare (تست پینگ) وصل می‌شه
+const CSP_REPORT = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' https://fonts.gstatic.com data:",
+  "img-src 'self' data: blob:",
+  "connect-src 'self' https://www.google.com https://www.cloudflare.com https://one.one.one.one",
+  "media-src 'self' data: blob:",
+  "manifest-src 'self'",
+  "worker-src 'self'",
+  "frame-ancestors 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "object-src 'none'",
+].join("; ");
+function secureHeaders(res) {
+  const h = new Headers(res.headers);
+  h.set("X-Content-Type-Options", "nosniff");
+  h.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  h.set("X-Frame-Options", "DENY");
+  h.set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()");
+  h.set("Content-Security-Policy-Report-Only", CSP_REPORT);
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers: h });
+}
+
+async function logoutAll(request, env) {
+  const sess = await getSession(env, request);
+  if (!sess) return json({ error: "login" }, 401);
+  const db = await getDB(env);
+  await db.prepare("DELETE FROM sessions WHERE tg_id=?").bind(String(sess.tg_id)).run();
+  return json({ ok: true }, 200, { "Set-Cookie": "imrc_sess=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax" });
+}
+
+// نگهداری: داده‌های قدیمی و موقت پاک می‌شن؛ کاربر، اشتراک، رسید و تیکت دست‌نخورده می‌مونن
+async function runRetention(env) {
+  const db = await getDB(env);
+  const now = Date.now(), day = 86400000;
+  const jobs = [
+    ["events", "DELETE FROM events WHERE ts<?", now - 365 * day],
+    ["audit_log", "DELETE FROM audit_log WHERE ts<?", now - 730 * day],
+    ["sessions", "DELETE FROM sessions WHERE created<?", now - SESSION_MS],
+    ["cap_alerts", "DELETE FROM cap_alerts WHERE period_start<?", now - 60 * day],
+    ["rate_limits", "DELETE FROM rate_limits WHERE win<?", now - day],
+    ["reminders", "DELETE FROM reminders WHERE until<?", now - 30 * day],
+    ["uptime_samples", "DELETE FROM uptime_samples WHERE ts<?", now - 90 * day],
+  ];
+  const res = await db.batch(jobs.map(([, sql, v]) => db.prepare(sql).bind(v)));
+  const out = { at: now };
+  jobs.forEach(([k], i) => { out[k] = res[i].meta ? res[i].meta.changes : 0; });
+  await db.prepare("INSERT INTO settings(k,v) VALUES('retention_last',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v")
+    .bind(JSON.stringify(out)).run();
+  return out;
+}
+// Cron هر دقیقه صدا زده می‌شه؛ فقط در دقیقه‌ی ۰۴:۰۰ به وقت تهران اجرا می‌شه
+async function maybeRetention(env) {
+  const minute = Math.floor((Date.now() + TEHRAN) / 60000) % 1440;
+  if (minute !== 240) return;
+  await runRetention(env);
+}
+async function adminRetention(env, method) {
+  const db = await getDB(env);
+  if (method === "POST") return json({ ok: true, result: await runRetention(env) });
+  const row = await db.prepare("SELECT v FROM settings WHERE k='retention_last'").first();
+  return json({ last: row ? JSON.parse(row.v) : null });
+}
+
+async function adminAudit(env, url) {
+  const db = await getDB(env);
+  const limit = Math.min(500, Math.max(1, parseInt(url.searchParams.get("limit")) || 200));
+  const rows = (await db.prepare("SELECT ts,actor,action,target,detail FROM audit_log ORDER BY id DESC LIMIT ?").bind(limit).all()).results || [];
+  return json({ items: rows });
+}
+
+// پشتیبان: کلید، سشن و توکن‌ها عمداً نیستن
+const BACKUP_TABLES = ["settings", "discount_codes", "subs", "bans", "user_limits", "receipts", "refs", "tickets", "ticket_msgs", "broadcasts", "users", "visitors", "reminders", "wallet", "wallet_log", "incidents"];
+async function adminBackup(env) {
+  const db = await getDB(env);
+  const out = { exported: new Date().toISOString(), version: 1, tables: {} };
+  for (const t of BACKUP_TABLES) {
+    const rows = (await db.prepare(`SELECT * FROM ${t}`).all()).results || [];
+    out.tables[t] = t === "settings" ? rows.filter((r) => r.k !== "cron_ts" && r.k !== "retention_last") : rows;
+  }
+  await audit(db, "admin", "backup", "", BACKUP_TABLES.join(","));
+  const stamp = new Date(Date.now() + TEHRAN).toISOString().slice(0, 10);
+  return new Response(JSON.stringify(out, null, 2), {
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Content-Disposition": `attachment; filename="imrc-backup-${stamp}.json"`,
+      "Cache-Control": "no-store",
+    },
+  });
+}
+
+// شاخص‌های رشد: فعال روزانه/هفتگی/ماهانه، و نگهداری کاربرهای ۷ تا ۱۴ روز پیش
+async function adminInsights(env) {
+  const db = await getDB(env);
+  const now = Date.now(), day = 86400000;
+  const one = (sql, ...b) => db.prepare(sql).bind(...b).first();
+  const [dau, wau, mau, new7, cohort, payers, tg] = await Promise.all([
+    one("SELECT COUNT(*) n FROM visitors WHERE last_seen>=?", now - day),
+    one("SELECT COUNT(*) n FROM visitors WHERE last_seen>=?", now - 7 * day),
+    one("SELECT COUNT(*) n FROM visitors WHERE last_seen>=?", now - 30 * day),
+    one("SELECT COUNT(*) n FROM visitors WHERE first_seen>=?", now - 7 * day),
+    one("SELECT COUNT(*) n, COALESCE(SUM(CASE WHEN last_seen>=? THEN 1 ELSE 0 END),0) kept FROM visitors WHERE first_seen>=? AND first_seen<?", now - 7 * day, now - 14 * day, now - 7 * day),
+    one("SELECT COUNT(DISTINCT tg_id) n FROM receipts WHERE status='approved'"),
+    one("SELECT COUNT(*) n FROM visitors WHERE tg_id IS NOT NULL AND tg_id<>''"),
+  ]);
+  const size = cohort.n || 0, kept = cohort.kept || 0;
+  return json({
+    dau: dau.n, wau: wau.n, mau: mau.n, new7: new7.n,
+    retention7: { size, kept, pct: size ? Math.round((kept / size) * 100) : null },
+    payers: payers.n, tg_users: tg.n,
+  });
+}
+
+async function adminReferrals(env) {
+  const db = await getDB(env);
+  const rows = (await db.prepare(`SELECT r.referrer, COUNT(*) n, COALESCE(SUM(r.rewarded),0) rewarded, MAX(v.tg_name) name, MAX(v.tg_username) username
+    FROM refs r LEFT JOIN visitors v ON v.tg_id=r.referrer GROUP BY r.referrer ORDER BY n DESC LIMIT 20`).all()).results || [];
+  return json({ top: rows });
+}
+
+// عملیات گروهی روی نتیجه‌ی فیلتر کاربران؛ اول پیش‌نمایش (dry_run)، بعد اجرا با همان تعداد (expect)
+const BULK_MAX = 500;
+const BULK_ACTIONS = ["grant", "ban", "unban"];
+async function adminBulk(request, env) {
+  let b;
+  try { b = await request.json(); } catch { return json({ error: "bad" }, 400); }
+  if (!BULK_ACTIONS.includes(b.action)) return json({ error: "عملیات نامعتبره" }, 400);
+  const days = parseInt(b.days) || 0;
+  if (b.action === "grant" && !(days >= 1 && days <= 3650)) return json({ error: "تعداد روز باید بین ۱ تا ۳۶۵۰ باشه" }, 400);
+  const db = await getDB(env);
+  const url = new URL("https://panel.local/?filter=" + encodeURIComponent(b.filter || "all") + "&q=" + encodeURIComponent(b.q || ""));
+  const w = userWhere(url, Date.now());
+  const where = `${w.sql} AND v.tg_id IS NOT NULL AND v.tg_id<>''`;
+  const cnt = (await db.prepare(`SELECT COUNT(*) n ${USER_FROM} WHERE ${where}`).bind(...w.p).first()).n;
+  if (b.dry_run) return json({ count: cnt, max: BULK_MAX });
+  if (cnt === 0) return json({ error: "کاربری برای این فیلتر پیدا نشد" }, 400);
+  if (cnt > BULK_MAX) return json({ error: `بیشتر از ${fa(BULK_MAX)} کاربر انتخاب شده؛ فیلتر رو محدودتر کن`, count: cnt }, 400);
+  if (b.expect !== cnt) return json({ error: "تعداد کاربرها تغییر کرده؛ دوباره پیش‌نمایش بگیر", count: cnt }, 409);
+  // ادمین هیچ‌وقت در مسدودسازی گروهی نمی‌ره (قفل‌کردن خودش)؛ شمارش پیش‌نمایش تغییر نمی‌کنه تا expect معتبر بمونه
+  const ids = ((await db.prepare(`SELECT DISTINCT v.tg_id ${USER_FROM} WHERE ${where}`).bind(...w.p).all()).results || [])
+    .map((r) => String(r.tg_id))
+    .filter((id) => !(b.action === "ban" && isAdmin(env, id)));
+  const now = Date.now();
+  const chunk = 40;
+  if (b.action === "grant") {
+    const cur = new Map();
+    for (let i = 0; i < ids.length; i += chunk) {
+      const part = ids.slice(i, i + chunk);
+      const rows = (await db.prepare(`SELECT tg_id,until FROM subs WHERE tg_id IN (${part.map(() => "?").join(",")})`).bind(...part).all()).results || [];
+      rows.forEach((r) => cur.set(String(r.tg_id), r.until));
+    }
+    const stmts = ids.map((id) => {
+      const until = Math.max(now, cur.get(id) || 0) + days * 86400000;
+      return db.prepare("INSERT INTO subs(tg_id,until) VALUES(?,?) ON CONFLICT(tg_id) DO UPDATE SET until=excluded.until").bind(id, until);
+    });
+    for (let i = 0; i < stmts.length; i += chunk) await db.batch(stmts.slice(i, i + chunk));
+  } else if (b.action === "ban") {
+    const reason = clean(b.reason, 100) || "عملیات گروهی";
+    const stmts = [];
+    for (const id of ids) {
+      stmts.push(db.prepare("INSERT INTO bans(tg_id,reason,ts) VALUES(?,?,?) ON CONFLICT(tg_id) DO UPDATE SET reason=excluded.reason, ts=excluded.ts").bind(id, reason, now));
+      stmts.push(db.prepare("DELETE FROM sessions WHERE tg_id=?").bind(id));
+    }
+    for (let i = 0; i < stmts.length; i += chunk) await db.batch(stmts.slice(i, i + chunk));
+  } else {
+    const stmts = ids.map((id) => db.prepare("DELETE FROM bans WHERE tg_id=?").bind(id));
+    for (let i = 0; i < stmts.length; i += chunk) await db.batch(stmts.slice(i, i + chunk));
+  }
+  await audit(db, "admin", "bulk_" + b.action, "", `${fa(ids.length)} کاربر${b.action === "grant" ? " • " + fa(days) + " روز" : ""} • فیلتر: ${b.filter || "all"}${b.q ? " • جستجو: " + String(b.q).slice(0, 30) : ""}`);
+  return json({ ok: true, affected: ids.length });
+}
+
+// پرداخت نقدی/دستی: رسید تأییدشده ثبت و اشتراک فعال می‌شه (مبلغ پیش‌فرض قیمت پلنه)
+async function adminManualPayment(request, env) {
+  let b;
+  try { b = await request.json(); } catch { return json({ error: "bad" }, 400); }
+  const tgId = String(b.tg_id || "");
+  if (!/^[0-9]{3,20}$/.test(tgId)) return json({ error: "آیدی تلگرام نامعتبره" }, 400);
+  const db = await getDB(env);
+  const st = await getSettings(db);
+  const plan = st.plans.find((p) => p.key === String(b.plan || ""));
+  if (!plan) return json({ error: "پلن نامعتبره" }, 400);
+  const amount = b.amount === "" || b.amount === undefined || b.amount === null ? plan.price : parseInt(b.amount);
+  if (!(amount >= 0 && amount <= 100000000)) return json({ error: "مبلغ نامعتبره" }, 400);
+  const note = clean(b.note, 80);
+  const now = Date.now();
+  const ins = await db.prepare("INSERT INTO receipts(tg_id,ts,file_id,plan,amount,code,status,decided,decided_by) VALUES(?,?,?,?,?,?,'approved',?,?)")
+    .bind(tgId, now, "manual", plan.key, amount, null, now, "panel").run();
+  const until = await grantSub(db, tgId, plan.days);
+  await audit(db, "admin", "manual_payment", tgId, `${plan.key} • ${fa(amount)} تومان${note ? " • " + note : ""}`);
+  if (env.BOT_TOKEN) {
+    const when = new Date(until).toLocaleDateString("fa-IR", { timeZone: "Asia/Tehran" });
+    await tg(env, "sendMessage", { chat_id: tgId, text: `✅ پرداختت ثبت شد و اشتراکت فعال شد.\nپلن ${plan.name}: ${fa(plan.days)} روز.\nاعتبار تا ${when}` }).catch(() => {});
+  }
+  return json({ ok: true, until, receipt: ins.meta.last_row_id });
+}
+
+/* ---------------- کیف پول اعتبار دعوت (فاز ۵) ---------------- */
+// اعتبار فقط با دعوت (ref_credit) شارژ می‌شه و موقع تأیید رسید خرج می‌شه؛ مبلغ نقدی رسید = قیمت − اعتبار
+async function walletBalance(db, tgId) {
+  const r = await db.prepare("SELECT balance FROM wallet WHERE tg_id=?").bind(String(tgId)).first();
+  return r ? Math.max(0, r.balance) : 0;
+}
+async function walletCredit(db, tgId, amount, reason) {
+  await db.prepare("INSERT INTO wallet(tg_id,balance) VALUES(?,?) ON CONFLICT(tg_id) DO UPDATE SET balance=balance+excluded.balance")
+    .bind(String(tgId), amount).run();
+  await db.prepare("INSERT INTO wallet_log(tg_id,ts,delta,reason) VALUES(?,?,?,?)").bind(String(tgId), Date.now(), amount, clean(reason, 80)).run();
+  return walletBalance(db, tgId);
+}
+async function walletDebit(db, tgId, amount, reason) {
+  const res = await db.prepare("UPDATE wallet SET balance=balance-? WHERE tg_id=? AND balance>=?").bind(amount, String(tgId), amount).run();
+  if (!(res.meta && res.meta.changes)) return false;
+  await db.prepare("INSERT INTO wallet_log(tg_id,ts,delta,reason) VALUES(?,?,?,?)").bind(String(tgId), Date.now(), -amount, clean(reason, 80)).run();
+  return true;
+}
+
+// پیشنهاد استفاده از اعتبار بعد از انتخاب پلن (فقط وقتی موجودی داره)
+async function walletOffer(env, db, chatId, tgId, plan, row) {
+  const bal = await walletBalance(db, tgId);
+  if (bal <= 0) return;
+  const pend = await db.prepare("SELECT use_wallet FROM pending_buy WHERE tg_id=?").bind(String(tgId)).first();
+  const using = !!(pend && pend.use_wallet);
+  const price = priceAfter(plan, row);
+  const applied = Math.min(bal, price);
+  const text = using
+    ? `🎁 از اعتبارت استفاده می‌شه: ${fa(applied)} تومان.\nمبلغ قابل پرداخت: ${fa(price - applied)} تومان.`
+    : `🎁 اعتبار هدیه داری: ${fa(bal)} تومان.\nاگه می‌خوای ازش استفاده کنی، دکمه‌ی زیر رو بزن.`;
+  const btn = using
+    ? { text: "↩️ بدون استفاده از اعتبار", callback_data: "wal:0" }
+    : { text: `🎁 استفاده از اعتبار (${fa(applied)} تومان)`, callback_data: "wal:1" };
+  return tg(env, "sendMessage", { chat_id: chatId, text, reply_markup: { inline_keyboard: [[btn]] } }).catch(() => {});
+}
+
+async function setWallet(env, db, chatId, tgId, on) {
+  const reply = (t) => tg(env, "sendMessage", { chat_id: chatId, text: t }).catch(() => {});
+  const pend = await db.prepare("SELECT plan FROM pending_buy WHERE tg_id=? AND ts>?").bind(tgId, Date.now() - PENDING_MS).first();
+  if (!pend || !pend.plan) return reply("اول پلن رو از /plans انتخاب کن.");
+  const st = await getSettings(db);
+  const plan = st.plans.find((p) => p.key === pend.plan);
+  if (!plan) return reply("این پلن دیگه وجود نداره. دوباره /plans رو بفرست.");
+  await db.prepare("UPDATE pending_buy SET use_wallet=? WHERE tg_id=?").bind(on ? 1 : 0, tgId).run();
+  return walletOffer(env, db, chatId, tgId, plan, await pendingCode(db, tgId));
+}
+
+async function adminWallets(env) {
+  const db = await getDB(env);
+  const items = (await db.prepare(`SELECT w.tg_id, w.balance, MAX(v.tg_name) name FROM wallet w
+    LEFT JOIN visitors v ON v.tg_id=w.tg_id WHERE w.balance>0 GROUP BY w.tg_id ORDER BY w.balance DESC LIMIT 50`).all()).results || [];
+  const tot = await db.prepare("SELECT COALESCE(SUM(balance),0) s, COUNT(*) n FROM wallet WHERE balance>0").first();
+  return json({ items, total: tot.s, holders: tot.n });
+}
+
+async function adminWalletAdjust(request, env) {
+  let b;
+  try { b = await request.json(); } catch { return json({ error: "bad" }, 400); }
+  const tgId = String(b.tg_id || "");
+  if (!/^[0-9]{3,20}$/.test(tgId)) return json({ error: "آیدی تلگرام نامعتبره" }, 400);
+  const delta = parseInt(b.delta);
+  if (!Number.isFinite(delta) || delta === 0 || Math.abs(delta) > 10000000) return json({ error: "مبلغ باید عدد غیرصفر تا ۱۰٬۰۰۰٬۰۰۰ تومان باشه" }, 400);
+  const reason = clean(b.reason, 80) || "تنظیم دستی";
+  const db = await getDB(env);
+  let bal;
+  if (delta < 0) {
+    if (!(await walletDebit(db, tgId, -delta, "ادمین: " + reason))) return json({ error: "موجودی کافی نیست" }, 400);
+    bal = await walletBalance(db, tgId);
+  } else {
+    bal = await walletCredit(db, tgId, delta, "ادمین: " + reason);
+  }
+  await audit(db, "admin", "wallet_adjust", tgId, `${fa(delta)} تومان • ${reason}`);
+  return json({ ok: true, balance: bal });
+}
+
+/* ---------------- آپ‌تایم و حوادث (فاز ۵) ---------------- */
+// هر ۵ دقیقه (روی دقیقه‌ی مضرب ۵ کرون) یک نمونه: ۱ = دیتابیس سالم و زیر ۱٫۵ ثانیه
+// دقیقه‌هایی که کرون نبوده نمونه ندارن و در درصد آپ‌تایم «خاموش» حساب می‌شن
+const SAMPLE_MS = 5 * 60000;
+const UPTIME_DAYS = 30;
+async function sampleUptime(env) {
+  const now = Date.now();
+  if (Math.floor(now / 60000) % 5 !== 0) return;
+  const db = await getDB(env);
+  let ok = 0;
+  try {
+    const t0 = Date.now();
+    await db.prepare("SELECT 1 x").first();
+    ok = Date.now() - t0 <= 1500 ? 1 : 0;
+  } catch (e) { ok = 0; }
+  const ts = Math.floor(now / SAMPLE_MS) * SAMPLE_MS;
+  await db.prepare("INSERT OR REPLACE INTO uptime_samples(ts,ok) VALUES(?,?)").bind(ts, ok).run();
+}
+
+async function uptimeSummary(db, now) {
+  const since = now - UPTIME_DAYS * 86400000;
+  const first = await db.prepare("SELECT MIN(ts) m FROM uptime_samples").first();
+  const rows = (await db.prepare("SELECT ts, ok FROM uptime_samples WHERE ts>=? ORDER BY ts").bind(since).all()).results || [];
+  const start = first && first.m ? Math.max(since, first.m) : now;
+  const expected = Math.max(1, Math.floor((now - start) / SAMPLE_MS) + 1);
+  const okCount = rows.reduce((a, r) => a + (r.ok ? 1 : 0), 0);
+  const pct = rows.length ? Math.min(100, Math.round((okCount / expected) * 10000) / 100) : null;
+  // میله‌های روزانه بر اساس روز تهران
+  const perDay = new Map();
+  for (const r of rows) {
+    const d = Math.floor((r.ts + TEHRAN) / 86400000);
+    const e = perDay.get(d) || { ok: 0, total: 0 };
+    e.total++; if (r.ok) e.ok++;
+    perDay.set(d, e);
+  }
+  const today = Math.floor((now + TEHRAN) / 86400000);
+  const bars = [];
+  for (let d = today - UPTIME_DAYS + 1; d <= today; d++) {
+    const e = perDay.get(d);
+    bars.push({ date: new Date(d * 86400000).toISOString().slice(0, 10), pct: e ? Math.round((e.ok / e.total) * 1000) / 10 : null });
+  }
+  return { pct, samples: rows.length, expected, bars };
+}
+
+async function statusHistory(env) {
+  const db = await getDB(env);
+  const now = Date.now();
+  const up = await uptimeSummary(db, now);
+  const inc = (await db.prepare("SELECT id,title,level,body,started,resolved FROM incidents ORDER BY started DESC LIMIT 20").all()).results || [];
+  return json({ days: UPTIME_DAYS, uptime: up.pct, bars: up.bars, incidents: inc, updated: now }, 200, { "Cache-Control": "no-store" });
+}
+
+async function adminIncidents(request, env) {
+  const db = await getDB(env);
+  if (request.method === "GET") {
+    const items = (await db.prepare("SELECT id,title,level,body,started,resolved FROM incidents ORDER BY started DESC LIMIT 100").all()).results || [];
+    const up = await uptimeSummary(db, Date.now());
+    return json({ items, uptime: up.pct, samples: up.samples, expected: up.expected });
+  }
+  let b;
+  try { b = await request.json(); } catch { return json({ error: "bad" }, 400); }
+  const now = Date.now();
+  if (b.action === "create") {
+    const title = clean(b.title, 120);
+    if (!title) return json({ error: "عنوان حادثه لازمه" }, 400);
+    if (!["degraded", "down"].includes(b.level)) return json({ error: "سطح حادثه باید degraded یا down باشه" }, 400);
+    const body = clean(b.body, 600);
+    const r = await db.prepare("INSERT INTO incidents(title,level,body,started,resolved) VALUES(?,?,?,?,NULL)")
+      .bind(title, b.level, body, now).run();
+    await audit(db, "admin", "incident_create", String(r.meta.last_row_id), `${b.level} • ${title}`);
+    return json({ ok: true, id: r.meta.last_row_id });
+  }
+  const id = parseInt(b.id);
+  if (!(id > 0)) return json({ error: "شماره حادثه نامعتبره" }, 400);
+  if (b.action === "resolve") {
+    const res = await db.prepare("UPDATE incidents SET resolved=? WHERE id=? AND resolved IS NULL").bind(now, id).run();
+    if (!res.meta.changes) return json({ error: "حادثه پیدا نشد یا قبلاً بسته شده" }, 400);
+    await audit(db, "admin", "incident_resolve", String(id), "");
+    return json({ ok: true });
+  }
+  if (b.action === "delete") {
+    await db.prepare("DELETE FROM incidents WHERE id=?").bind(id).run();
+    await audit(db, "admin", "incident_delete", String(id), "");
+    return json({ ok: true });
+  }
+  return json({ error: "عملیات نامعتبره" }, 400);
+}
+
+/* ---------------- اعلان مرورگر / Web Push (فاز ۵) ---------------- */
+// کلیدها از Secrets کلودفلر: VAPID_PUBLIC_KEY و VAPID_PRIVATE_KEY (base64url) و VAPID_SUBJECT (mailto: یا https:)
+// بدون کلید، همه‌ی این بخش خاموشه و دکمه‌ی اعلان در پنل نشون داده نمی‌شه.
+const b64u = {
+  dec: (s) => {
+    const t = String(s).replace(/-/g, "+").replace(/_/g, "/");
+    const pad = t.length % 4 ? t + "====".slice(t.length % 4) : t;
+    return Uint8Array.from(atob(pad), (c) => c.charCodeAt(0));
+  },
+  enc: (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""),
+};
+const concatBytes = (...arrs) => {
+  const out = new Uint8Array(arrs.reduce((a, x) => a + x.length, 0));
+  let o = 0;
+  for (const x of arrs) { out.set(x, o); o += x.length; }
+  return out;
+};
+const enc8 = new TextEncoder();
+function vapidKeys(env) {
+  if (!env.VAPID_PUBLIC_KEY || !env.VAPID_PRIVATE_KEY) return null;
+  return { pub: env.VAPID_PUBLIC_KEY, priv: env.VAPID_PRIVATE_KEY, subject: env.VAPID_SUBJECT || "mailto:panel@example.com" };
+}
+
+async function hkdf(salt, ikm, info, len) {
+  const k = await crypto.subtle.importKey("raw", ikm, "HKDF", false, ["deriveBits"]);
+  return new Uint8Array(await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt, info }, k, len * 8));
+}
+
+// RFC 8291 (aes128gcm). opts فقط برای تست با بردار استاندارد: salt و asPair ثابت
+async function encryptPayload(uaPub, authSecret, plaintext, opts = {}) {
+  const salt = opts.salt || crypto.getRandomValues(new Uint8Array(16));
+  const asPair = opts.asPair || (await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]));
+  const asPub = new Uint8Array(await crypto.subtle.exportKey("raw", asPair.publicKey));
+  const uaKey = await crypto.subtle.importKey("raw", uaPub, { name: "ECDH", namedCurve: "P-256" }, false, []);
+  const ecdh = new Uint8Array(await crypto.subtle.deriveBits({ name: "ECDH", public: uaKey }, asPair.privateKey, 256));
+  const ikm = await hkdf(authSecret, ecdh, concatBytes(enc8.encode("WebPush: info\0"), uaPub, asPub), 32);
+  const cek = await hkdf(salt, ikm, enc8.encode("Content-Encoding: aes128gcm\0"), 16);
+  const nonce = await hkdf(salt, ikm, enc8.encode("Content-Encoding: nonce\0"), 12);
+  const aes = await crypto.subtle.importKey("raw", cek, "AES-GCM", false, ["encrypt"]);
+  const padded = concatBytes(plaintext, new Uint8Array([2])); // یک رکورد، delimiter = 2
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce }, aes, padded));
+  const rs = new Uint8Array([0, 0, 16, 0]); // 4096
+  return concatBytes(salt, rs, new Uint8Array([asPub.length]), asPub, ct);
+}
+
+async function vapidJwt(env, aud) {
+  const k = vapidKeys(env);
+  const pub = b64u.dec(k.pub);
+  const key = await crypto.subtle.importKey("jwk",
+    { kty: "EC", crv: "P-256", d: k.priv, x: b64u.enc(pub.slice(1, 33)), y: b64u.enc(pub.slice(33, 65)) },
+    { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]);
+  const head = b64u.enc(enc8.encode(JSON.stringify({ typ: "JWT", alg: "ES256" })));
+  const body = b64u.enc(enc8.encode(JSON.stringify({ aud, exp: Math.floor(Date.now() / 1000) + 12 * 3600, sub: k.subject })));
+  const sig = await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, key, enc8.encode(head + "." + body));
+  return `${head}.${body}.${b64u.enc(sig)}`;
+}
+
+async function sendPush(env, db, tgId, payload) {
+  if (!vapidKeys(env)) return 0;
+  const subs = (await db.prepare("SELECT endpoint,p256dh,auth FROM push_subs WHERE tg_id=?").bind(String(tgId)).all()).results || [];
+  let sent = 0;
+  for (const s of subs) {
+    try {
+      const jwt = await vapidJwt(env, new URL(s.endpoint).origin);
+      const body = await encryptPayload(b64u.dec(s.p256dh), b64u.dec(s.auth), enc8.encode(JSON.stringify(payload)));
+      const r = await fetch(s.endpoint, {
+        method: "POST",
+        headers: { TTL: "3600", "Content-Encoding": "aes128gcm", "Content-Type": "application/octet-stream", Authorization: `vapid t=${jwt}, k=${env.VAPID_PUBLIC_KEY}` },
+        body,
+      });
+      if (r.status === 404 || r.status === 410) await db.prepare("DELETE FROM push_subs WHERE endpoint=?").bind(s.endpoint).run();
+      else if (r.ok) sent++;
+    } catch (e) { /* شبکه یا کلید خراب: این دستگاه رد می‌شه */ }
+  }
+  return sent;
+}
+
+async function pushKey(env) {
+  if (!vapidKeys(env)) return json({ error: "push_off" }, 503, { "Cache-Control": "no-store" });
+  return json({ key: env.VAPID_PUBLIC_KEY }, 200, { "Cache-Control": "no-store" });
+}
+
+async function pushSubscribe(request, env) {
+  const sess = await getSession(env, request);
+  if (!sess) return json({ error: "login" }, 401);
+  if (!vapidKeys(env)) return json({ error: "push_off" }, 503);
+  let b;
+  try { b = await request.json(); } catch { return json({ error: "bad" }, 400); }
+  const endpoint = String(b.endpoint || "");
+  const p256dh = String((b.keys && b.keys.p256dh) || "");
+  const auth = String((b.keys && b.keys.auth) || "");
+  if (!/^https:\/\/\S{10,500}$/.test(endpoint)) return json({ error: "آدرس اعلان نامعتبره" }, 400);
+  let uaPub, authB;
+  try { uaPub = b64u.dec(p256dh); authB = b64u.dec(auth); } catch { return json({ error: "کلید اعلان نامعتبره" }, 400); }
+  if (uaPub.length !== 65 || uaPub[0] !== 4 || authB.length !== 16) return json({ error: "کلید اعلان نامعتبره" }, 400);
+  const db = await getDB(env);
+  const tg = String(sess.tg_id);
+  await db.prepare(`INSERT INTO push_subs(endpoint,tg_id,p256dh,auth,created) VALUES(?,?,?,?,?)
+    ON CONFLICT(endpoint) DO UPDATE SET tg_id=excluded.tg_id, p256dh=excluded.p256dh, auth=excluded.auth, created=excluded.created`)
+    .bind(endpoint, tg, p256dh, auth, Date.now()).run();
+  // هر کاربر حداکثر ۵ دستگاه؛ قدیمی‌ترها حذف
+  await db.prepare("DELETE FROM push_subs WHERE tg_id=? AND endpoint NOT IN (SELECT endpoint FROM push_subs WHERE tg_id=? ORDER BY created DESC LIMIT 5)")
+    .bind(tg, tg).run();
+  return json({ ok: true });
+}
+
+async function pushUnsubscribe(request, env) {
+  const sess = await getSession(env, request);
+  if (!sess) return json({ error: "login" }, 401);
+  let b;
+  try { b = await request.json(); } catch { return json({ error: "bad" }, 400); }
+  const db = await getDB(env);
+  await db.prepare("DELETE FROM push_subs WHERE endpoint=? AND tg_id=?").bind(String(b.endpoint || ""), String(sess.tg_id)).run();
+  return json({ ok: true });
+}
+
+// فقط برای تست‌های خودکار
+export const __test = { encryptPayload, vapidJwt, b64u };
+
+
 /* ---------------- router ---------------- */
 export default {
   // اجرای هر دقیقه (wrangler.jsonc → triggers): یادآوری انقضا و ارسال پیام همگانی
   async scheduled(event, env) {
     try { await heartbeat(await getDB(env)); } catch (e) { console.error("heartbeat", e); }
+    try { await maybeRetention(env); } catch (e) { console.error("retention", e); }
+    try { await sampleUptime(env); } catch (e) { console.error("uptime", e); }
     try { await runReminders(env); } catch (e) { console.error("reminders", e); }
     try { await runBroadcasts(env); } catch (e) { console.error("broadcasts", e); }
   },
   async fetch(request, env) {
+    return secureHeaders(await this.route(request, env));
+  },
+  async route(request, env) {
     const url = new URL(request.url);
     const p = url.pathname;
     try {
-      if (p === "/api/auth/start" && request.method === "POST") return await authStart(env);
+      if (p === "/api/auth/start" && request.method === "POST") return await authStart(env, request);
       if (p === "/api/auth/check" && request.method === "GET") return await authCheck(env, url);
       if (p === "/api/tg/webhook" && request.method === "POST") return await tgWebhook(request, env);
       if (p === "/api/track" && request.method === "POST") return await track(request, env);
@@ -1449,6 +2024,21 @@ export default {
         const bad = await adminAuth(request, env); if (bad) return bad;
         return await adminStats(env);
       }
+      if (p === "/api/logout-all" && request.method === "POST") return await logoutAll(request, env);
+      if (p === "/api/status/history" && request.method === "GET") return await statusHistory(env);
+      if (p === "/api/push/key" && request.method === "GET") return await pushKey(env);
+      if (p === "/api/push/subscribe" && request.method === "POST") return await pushSubscribe(request, env);
+      if (p === "/api/push/unsubscribe" && request.method === "POST") return await pushUnsubscribe(request, env);
+      if (p === "/api/admin/incidents" && (request.method === "GET" || request.method === "POST")) { const bad = await adminAuth(request, env); if (bad) return bad; return await adminIncidents(request, env); }
+      if (p === "/api/admin/wallets" && request.method === "GET") { const bad = await adminAuth(request, env); if (bad) return bad; return await adminWallets(env); }
+      if (p === "/api/admin/wallet" && request.method === "POST") { const bad = await adminAuth(request, env); if (bad) return bad; return await adminWalletAdjust(request, env); }
+      if (p === "/api/admin/audit" && request.method === "GET") { const bad = await adminAuth(request, env); if (bad) return bad; return await adminAudit(env, url); }
+      if (p === "/api/admin/backup" && request.method === "GET") { const bad = await adminAuth(request, env); if (bad) return bad; return await adminBackup(env); }
+      if (p === "/api/admin/retention" && (request.method === "GET" || request.method === "POST")) { const bad = await adminAuth(request, env); if (bad) return bad; return await adminRetention(env, request.method); }
+      if (p === "/api/admin/insights" && request.method === "GET") { const bad = await adminAuth(request, env); if (bad) return bad; return await adminInsights(env); }
+      if (p === "/api/admin/referrals" && request.method === "GET") { const bad = await adminAuth(request, env); if (bad) return bad; return await adminReferrals(env); }
+      if (p === "/api/admin/bulk" && request.method === "POST") { const bad = await adminAuth(request, env); if (bad) return bad; return await adminBulk(request, env); }
+      if (p === "/api/admin/manual-payment" && request.method === "POST") { const bad = await adminAuth(request, env); if (bad) return bad; return await adminManualPayment(request, env); }
       if (p === "/api/status" && request.method === "GET") return json(await serviceStatus(env), 200, { "Cache-Control": "no-store" });
       if (p === "/api/configs/history" && request.method === "GET") return await configHistory(request, env);
       if ((p === "/status" || p === "/help") && request.method === "GET") return await pageAsset(request, env, p + ".html");

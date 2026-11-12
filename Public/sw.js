@@ -2,7 +2,7 @@
 // قانون کلی: هیچ پاسخ API یا صفحه‌ی مخصوص ورود کش نمی‌شه (داده‌ی کاربر و سشن همیشه تازه از سرور میاد).
 // فقط پوسته‌ی عمومی (صفحه‌های راهنما و وضعیت، آیکون‌ها، manifest) کش می‌شه تا آفلاین هم باز بشه.
 
-const VERSION = "imrc-shell-v1";
+const VERSION = "imrc-shell-v2";
 const PAGES = ["/help.html", "/status.html", "/offline.html"];
 const ASSETS = [
   "/manifest.webmanifest",
@@ -67,4 +67,29 @@ self.addEventListener("fetch", (event) => {
   if (ASSETS.includes(url.pathname)) {
     event.respondWith(caches.match(url.pathname).then((hit) => hit || fetch(req)));
   }
+});
+
+// اعلان مرورگر (Web Push): متن از سرور میاد؛ فقط عنوان، متن و آدرس داخل سایت
+self.addEventListener("push", (event) => {
+  let data = {};
+  try { data = event.data ? event.data.json() : {}; } catch (e) { data = { title: "IMRC", body: event.data ? event.data.text() : "" }; }
+  const title = String(data.title || "IMRC").slice(0, 80);
+  event.waitUntil(self.registration.showNotification(title, {
+    body: String(data.body || "").slice(0, 240),
+    icon: "/icons/icon-192.png",
+    badge: "/icons/icon-192.png",
+    tag: "imrc-" + (data.tag || "info"),
+    data: { url: typeof data.url === "string" && /^\/(?!\/)/.test(data.url) ? data.url : "/" },
+  }));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || "/";
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
+      for (const c of list) { if ("focus" in c) return c.focus(); }
+      return self.clients.openWindow(url);
+    })
+  );
 });

@@ -484,8 +484,10 @@ async function adminDecide(env, db, cq, action, id, planKey, answer) {
   const st = await getSettings(db);
   const plan = st.plans.find((p) => p.key === planKey);
   if (!plan) return answer("پلن نامعتبره.");
-  const res = await db.prepare("UPDATE receipts SET status='approved', plan=?, decided=?, decided_by=? WHERE id=? AND status='pending'")
-    .bind(plan.key, now, by, id).run();
+  // مبلغ ثبت‌شده‌ی رسید فقط وقتی معتبره که همون پلنی باشه که ادمین تأیید می‌کنه؛ وگرنه قیمت پلن تأییدشده (با کد) حساب می‌شه
+  const amount = rec.amount !== null && rec.plan === plan.key ? rec.amount : priceAfter(plan, await activeCode(db, rec.code));
+  const res = await db.prepare("UPDATE receipts SET status='approved', plan=?, amount=?, decided=?, decided_by=? WHERE id=? AND status='pending'")
+    .bind(plan.key, amount, now, by, id).run();
   if (!res.meta.changes) return answer("قبلاً بررسی شده.");
   if (rec.code) await db.prepare("UPDATE discount_codes SET used=used+1 WHERE code=? AND (max_uses=0 OR used<max_uses)").bind(rec.code).run();
   const until = await grantSub(db, rec.tg_id, plan.days);
@@ -1211,6 +1213,150 @@ async function adminBroadcasts(request, env) {
   return json({ ok: true, id: res.meta.last_row_id, total: cnt.n });
 }
 
+/* ---------------- گزارش، کاربران، خروجی (فاز ۳) ---------------- */
+const USER_PAGE = 50;
+const USER_FILTERS = ["all", "sub", "expired", "never", "banned", "new7", "inactive30"];
+const USER_COLS = `v.vid,v.first_seen,v.last_seen,v.country,v.city,v.device,v.visits,v.configs,v.actions,v.last_name,v.tg_id,v.tg_name,v.tg_username,s.until sub_until,b.tg_id banned,ul.lim ul_lim,ul.period ul_period,ul.unlock ul_unlock,ul.until ul_until`;
+const USER_FROM = "FROM visitors v LEFT JOIN subs s ON s.tg_id=v.tg_id LEFT JOIN bans b ON b.tg_id=v.tg_id LEFT JOIN user_limits ul ON ul.tg_id=v.tg_id";
+const userStatus = (r, now) => (r.banned ? "مسدود" : r.sub_until > now ? "اشتراک فعال" : r.sub_until ? "منقضی" : "رایگان");
+const fmtDate = (ms) => (ms ? new Date(ms + TEHRAN).toISOString().slice(0, 16).replace("T", " ") : "");
+
+// فیلتر + جستجو. q بدون % و _ (تا LIKE بی‌اثر بشه)
+function userWhere(url, now) {
+  const f = url.searchParams.get("filter");
+  const filter = USER_FILTERS.includes(f) ? f : "all";
+  const q = String(url.searchParams.get("q") || "").replace(/[%_\\]/g, "").trim().slice(0, 40);
+  const like = q ? `%${q}%` : "";
+  let cond = { sql: "1=1", p: [] };
+  if (filter === "sub") cond = { sql: "s.until > ?", p: [now] };
+  if (filter === "expired") cond = { sql: "s.until IS NOT NULL AND s.until <= ?", p: [now] };
+  if (filter === "never") cond = { sql: "s.until IS NULL", p: [] };
+  if (filter === "banned") cond = { sql: "b.tg_id IS NOT NULL", p: [] };
+  if (filter === "new7") cond = { sql: "v.first_seen >= ?", p: [now - 7 * 86400000] };
+  if (filter === "inactive30") cond = { sql: "v.last_seen < ?", p: [now - 30 * 86400000] };
+  return {
+    sql: `${cond.sql} AND (? = '' OR v.tg_name LIKE ? OR v.tg_username LIKE ? OR v.last_name LIKE ? OR v.tg_id LIKE ? OR v.city LIKE ?)`,
+    p: [...cond.p, q, like, like, like, like, like],
+  };
+}
+
+async function adminUsers(env, url) {
+  const db = await getDB(env);
+  const now = Date.now();
+  const w = userWhere(url, now);
+  const page = Math.max(0, parseInt(url.searchParams.get("page")) || 0);
+  const total = (await db.prepare(`SELECT COUNT(*) n ${USER_FROM} WHERE ${w.sql}`).bind(...w.p).first()).n;
+  const rows = (await db.prepare(`SELECT ${USER_COLS} ${USER_FROM} WHERE ${w.sql} ORDER BY v.last_seen DESC LIMIT ? OFFSET ?`)
+    .bind(...w.p, USER_PAGE, page * USER_PAGE).all()).results || [];
+  return json({
+    users: rows.map((r) => ({ ...r, status: userStatus(r, now) })),
+    total, page, pages: Math.max(1, Math.ceil(total / USER_PAGE)),
+  });
+}
+
+// ---- گزارش درآمد: روزها و ماه‌های شمسی به وقت تهران ----
+const JFMT = new Intl.DateTimeFormat("en-u-ca-persian", { year: "numeric", month: "numeric", timeZone: "UTC" });
+const JLABEL = new Intl.DateTimeFormat("fa-IR-u-ca-persian", { year: "numeric", month: "long", timeZone: "UTC" });
+const DLABEL = new Intl.DateTimeFormat("fa-IR-u-ca-persian", { day: "numeric", month: "short", timeZone: "UTC" });
+const dayDate = (d) => new Date(d * 86400000 + 12 * 3600000); // ظهر همون روز تهران (بی‌خطر از مرز تاریخ)
+const jKey = (d) => {
+  const p = JFMT.formatToParts(dayDate(d));
+  return Number(p.find((x) => x.type === "year").value) * 100 + Number(p.find((x) => x.type === "month").value);
+};
+
+async function buildReport(db, now) {
+  const today = Math.floor((now + TEHRAN) / 86400000);
+  const from = (today - 400) * 86400000 - TEHRAN;
+  const P = (q, ...b) => db.prepare(q).bind(...b);
+  const [rev, rej, cfg, usr, tot] = await db.batch([
+    P("SELECT CAST((decided+?)/86400000 AS INTEGER) d, COALESCE(SUM(amount),0) a, COUNT(*) n FROM receipts WHERE status='approved' AND decided>=? GROUP BY d", TEHRAN, from),
+    P("SELECT CAST((decided+?)/86400000 AS INTEGER) d, COUNT(*) n FROM receipts WHERE status='rejected' AND decided>=? GROUP BY d", TEHRAN, from),
+    P("SELECT CAST((ts+?)/86400000 AS INTEGER) d, COUNT(*) n FROM config_log WHERE ts>=? GROUP BY d", TEHRAN, from),
+    P("SELECT CAST((created+?)/86400000 AS INTEGER) d, COUNT(*) n FROM users WHERE created>=? GROUP BY d", TEHRAN, from),
+    P("SELECT COALESCE(SUM(amount),0) a, COUNT(*) n FROM receipts WHERE status='approved'"),
+  ]);
+  const day = {};
+  const at = (d) => (day[d] ||= { amount: 0, n: 0, rej: 0, cfg: 0, usr: 0 });
+  for (const r of rev.results) { const x = at(r.d); x.amount = r.a; x.n = r.n; }
+  for (const r of rej.results) at(r.d).rej = r.n;
+  for (const r of cfg.results) at(r.d).cfg = r.n;
+  for (const r of usr.results) at(r.d).usr = r.n;
+
+  const daily = [];
+  for (let d = today - 29; d <= today; d++) {
+    const x = at(d);
+    daily.push({ d, label: DLABEL.format(dayDate(d)), amount: x.amount, n: x.n });
+  }
+  const months = new Map();
+  for (let d = today - 400; d <= today; d++) {
+    const k = jKey(d);
+    if (!months.has(k)) months.set(k, { key: k, label: JLABEL.format(dayDate(d)), amount: 0, n: 0, rej: 0, cfg: 0, usr: 0 });
+    const m = months.get(k), x = day[d];
+    if (x) { m.amount += x.amount; m.n += x.n; m.rej += x.rej; m.cfg += x.cfg; m.usr += x.usr; }
+  }
+  const monthly = [...months.values()].slice(-12).reverse();
+  const cur = monthly[0];
+  const t = day[today] || { amount: 0, n: 0 };
+  return {
+    daily, monthly,
+    today: { amount: t.amount, n: t.n },
+    month: { amount: cur.amount, n: cur.n },
+    total: { amount: tot.results[0].a, n: tot.results[0].n },
+  };
+}
+
+// ---- خروجی CSV (با BOM تا اکسل فارسی رو درست باز کنه) ----
+function csvResponse(name, headers, rows) {
+  const cell = (v) => {
+    if (v === null || v === undefined) return "";
+    if (typeof v === "number") return String(v);
+    let s = String(v);
+    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; // جلوگیری از اجرای فرمول توسط اکسل
+    return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const body = "\uFEFF" + [headers, ...rows].map((r) => r.map(cell).join(",")).join("\r\n") + "\r\n";
+  return new Response(body, {
+    headers: {
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": `attachment; filename="${name}"`,
+      "Cache-Control": "no-store",
+    },
+  });
+}
+
+async function adminExport(env, url) {
+  const type = url.searchParams.get("type");
+  const db = await getDB(env);
+  const now = Date.now();
+  const stamp = new Date(now + TEHRAN).toISOString().slice(0, 10);
+  if (type === "users") {
+    const w = userWhere(url, now);
+    const rows = (await db.prepare(`SELECT ${USER_COLS} ${USER_FROM} WHERE ${w.sql} ORDER BY v.last_seen DESC LIMIT 20000`).bind(...w.p).all()).results || [];
+    return csvResponse(`users-${stamp}.csv`,
+      ["آیدی تلگرام", "نام", "یوزرنیم", "کشور", "شهر", "دستگاه", "اولین بازدید", "آخرین فعالیت", "تعداد کانفیگ", "وضعیت اشتراک", "اشتراک تا", "سقف اختصاصی"],
+      rows.map((r) => [
+        r.tg_id, r.tg_name || r.last_name || "", r.tg_username || "", r.country, r.city, r.device,
+        fmtDate(r.first_seen), fmtDate(r.last_seen), r.configs, userStatus(r, now),
+        r.sub_until ? fmtDate(r.sub_until) : "",
+        r.ul_lim != null && (!r.ul_until || r.ul_until > now) ? `${r.ul_lim} در ${PERIODS[r.ul_period] || ""}` : "",
+      ]));
+  }
+  if (type === "receipts") {
+    const rows = (await db.prepare(`SELECT r.id, r.tg_id, r.ts, r.decided, r.plan, r.amount, r.code, r.status, r.decided_by, v.tg_name
+      FROM receipts r LEFT JOIN visitors v ON v.tg_id=r.tg_id ORDER BY r.id DESC LIMIT 20000`).all()).results || [];
+    return csvResponse(`receipts-${stamp}.csv`,
+      ["شماره رسید", "آیدی تلگرام", "نام", "زمان ارسال", "زمان بررسی", "پلن", "مبلغ (تومان)", "کد تخفیف", "وضعیت", "بررسی‌کننده"],
+      rows.map((r) => [r.id, r.tg_id, r.tg_name || "", fmtDate(r.ts), fmtDate(r.decided), r.plan || "", r.amount ?? "", r.code || "", r.status, r.decided_by || ""]));
+  }
+  if (type === "monthly") {
+    const rep = await buildReport(db, now);
+    return csvResponse(`monthly-${stamp}.csv`,
+      ["ماه (شمسی)", "درآمد (تومان)", "تعداد پرداخت", "رسید رد‌شده", "کاربر جدید", "کانفیگ ساخته‌شده"],
+      rep.monthly.map((m) => [m.label, m.amount, m.n, m.rej, m.usr, m.cfg]));
+  }
+  return json({ error: "نوع خروجی نامعتبره" }, 400);
+}
+
 /* ---------------- router ---------------- */
 export default {
   // اجرای هر دقیقه (wrangler.jsonc → triggers): یادآوری انقضا و ارسال پیام همگانی
@@ -1252,6 +1398,18 @@ export default {
       if (p === "/api/admin/webhook" && request.method === "POST") {
         const bad = await adminAuth(request, env); if (bad) return bad;
         return await adminWebhook(request, env);
+      }
+      if (p === "/api/admin/users" && request.method === "GET") {
+        const bad = await adminAuth(request, env); if (bad) return bad;
+        return await adminUsers(env, url);
+      }
+      if (p === "/api/admin/report" && request.method === "GET") {
+        const bad = await adminAuth(request, env); if (bad) return bad;
+        return json(await buildReport(await getDB(env), Date.now()));
+      }
+      if (p === "/api/admin/export" && request.method === "GET") {
+        const bad = await adminAuth(request, env); if (bad) return bad;
+        return await adminExport(env, url);
       }
       if (p === "/api/admin/tickets" && request.method === "GET") {
         const bad = await adminAuth(request, env); if (bad) return bad;

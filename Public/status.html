@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+<meta name="robots" content="noindex"/>
+<meta name="theme-color" content="#070B1A"/>
+<link rel="manifest" href="/manifest.webmanifest"/>
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png"/>
+<title>وضعیت سرویس • IMRC | Service status</title>
+<style>
+  :root{--bg:#070B1A;--card:#0E1530;--line:#1d2a4f;--tx:#E8EEFF;--dim:#8a97bd;--ok:#2ee59d;--warn:#FFE14D;--bad:#ff5470}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;background:var(--bg);color:var(--tx);font-family:Vazirmatn,system-ui,sans-serif;padding:20px 16px 40px}
+  .wrap{max-width:560px;margin:0 auto}
+  .top{display:flex;align-items:center;gap:10px;justify-content:space-between;margin-bottom:18px}
+  h1{font-size:20px;margin:0}
+  .lang{background:transparent;color:var(--tx);border:1px solid var(--line);border-radius:10px;padding:6px 12px;font:inherit;cursor:pointer}
+  .hero{border-radius:16px;padding:18px;border:1px solid var(--line);background:var(--card);display:flex;align-items:center;gap:12px}
+  .dot{width:14px;height:14px;border-radius:50%;flex:0 0 14px;background:var(--dim);box-shadow:0 0 0 4px rgba(255,255,255,.04)}
+  .hero.ok .dot{background:var(--ok)} .hero.degraded .dot{background:var(--warn)} .hero.down .dot{background:var(--bad)}
+  .hero b{font-size:17px}
+  .notice{margin-top:12px;border-radius:14px;padding:12px 14px;border:1px solid var(--line);background:var(--card);font-size:14px;line-height:1.8;white-space:pre-line}
+  .notice.degraded{border-color:var(--warn)} .notice.down{border-color:var(--bad)}
+  .list{margin-top:14px;border:1px solid var(--line);border-radius:16px;overflow:hidden;background:var(--card)}
+  .row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:14px 16px;border-top:1px solid var(--line)}
+  .row:first-child{border-top:0}
+  .row small{display:block;color:var(--dim);font-size:12px;margin-top:2px}
+  .badge{font-size:13px;font-weight:700;white-space:nowrap}
+  .ok .badge{color:var(--ok)} .degraded .badge{color:var(--warn)} .down .badge{color:var(--bad)} .unknown .badge{color:var(--dim)}
+  .foot{margin-top:14px;color:var(--dim);font-size:12px;line-height:1.8;text-align:center}
+  a{color:#7fd8ff}
+  /* دو زبان: فقط بلوک زبان فعال نمایش داده می‌شه */
+  html:not([lang="en"]) .en{display:none}
+  html[lang="en"] .fa{display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <h1><span class="fa">وضعیت سرویس</span><span class="en">Service status</span></h1>
+    <button class="lang" id="langBtn" type="button" onclick="toggleLang()">English</button>
+  </div>
+
+  <div class="hero unknown" id="hero"><span class="dot"></span><b id="heroText">در حال بررسی…</b></div>
+  <div class="notice" id="notice" hidden></div>
+
+  <div class="list" id="list"></div>
+
+  <div class="foot">
+    <span class="fa">هر ۳۰ ثانیه بروزرسانی می‌شه. </span><span class="en">Refreshes every 30 seconds. </span>
+    <span id="updated"></span><br/>
+    <a href="/help.html"><span class="fa">راهنما و سوالات</span><span class="en">Help &amp; FAQ</span></a>
+  </div>
+</div>
+
+<script>
+(function(){
+  const T = {
+    fa: {
+      ok:"همه‌ی سرویس‌ها فعالند", degraded:"بعضی سرویس‌ها کند یا ناپایدارند", down:"سرویس در دسترس نیست",
+      unreachable:"در دسترس نیست. اینترنت خودت رو چک کن.", loading:"در حال بررسی…",
+      words:{ok:"فعال", degraded:"کند / ناپایدار", down:"قطع", unknown:"نامشخص"},
+      comps:{api:["پنل و API","پاسخ می‌ده"], database:["پایگاه داده","پاسخ‌گویی دیتابیس"], cron:["کارهای زمان‌بندی‌شده","یادآور اشتراک و پیام همگانی"]},
+      updated:"آخرین بررسی: ", ms:" میلی‌ثانیه", locale:"fa-IR"
+    },
+    en: {
+      ok:"All systems operational", degraded:"Some systems are slow or unstable", down:"Service unavailable",
+      unreachable:"Unavailable. Check your internet connection.", loading:"Checking…",
+      words:{ok:"Operational", degraded:"Degraded", down:"Down", unknown:"Unknown"},
+      comps:{api:["Panel & API","Responding"], database:["Database","Query response"], cron:["Scheduled jobs","Subscription reminders & broadcasts"]},
+      updated:"Last checked: ", ms:" ms", locale:"en-US"
+    }
+  };
+  let lang = (new URLSearchParams(location.search).get("lang")) || localStorage.getItem("IMRC_lang") || "fa";
+  if (lang !== "en") lang = "fa";
+  let last = null;
+
+  function setLang(l){
+    lang = l === "en" ? "en" : "fa";
+    localStorage.setItem("IMRC_lang", lang);
+    document.documentElement.lang = lang;
+    document.documentElement.dir = lang === "en" ? "ltr" : "rtl";
+    document.getElementById("langBtn").textContent = lang === "en" ? "فارسی" : "English";
+    document.title = lang === "en" ? "Service status • IMRC" : "وضعیت سرویس • IMRC";
+    if (last) render(last); else render(null);
+  }
+  window.toggleLang = function(){ setLang(lang === "en" ? "fa" : "en") };
+
+  function render(d){
+    const t = T[lang];
+    const hero = document.getElementById("hero");
+    const list = document.getElementById("list");
+    const notice = document.getElementById("notice");
+    if (!d) {
+      hero.className = "hero unknown";
+      document.getElementById("heroText").textContent = t.loading;
+      list.innerHTML = "";
+      notice.hidden = true;
+      return;
+    }
+    const level = d.overall || "unknown";
+    hero.className = "hero " + level;
+    document.getElementById("heroText").textContent = t[level] || t.loading;
+    list.innerHTML = (d.components || []).map(c => {
+      const [name, sub] = t.comps[c.id] || [c.id, ""];
+      const ms = (c.id === "database" && typeof c.ms === "number") ? " • " + c.ms + t.ms : "";
+      return '<div class="row ' + c.status + '"><div>' + esc(name) + '<small>' + esc(sub) + ms + '</small></div>' +
+             '<span class="badge">' + esc(t.words[c.status] || t.words.unknown) + '</span></div>';
+    }).join("");
+    if (d.notice && d.notice.text) {
+      notice.hidden = false;
+      notice.className = "notice " + (d.notice.level || "");
+      notice.textContent = d.notice.text;
+    } else {
+      notice.hidden = true;
+    }
+    document.getElementById("updated").textContent = t.updated + new Date(d.updated).toLocaleTimeString(t.locale, {timeZone: "Asia/Tehran", hour: "2-digit", minute: "2-digit"});
+  }
+
+  function esc(s){ return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+  async function load(){
+    try {
+      const r = await fetch("/api/status", {cache: "no-store"});
+      if (!r.ok) throw new Error("status " + r.status);
+      last = await r.json();
+      render(last);
+    } catch (e) {
+      last = null;
+      const hero = document.getElementById("hero");
+      hero.className = "hero down";
+      document.getElementById("heroText").textContent = T[lang].unreachable;
+      document.getElementById("list").innerHTML = "";
+      document.getElementById("notice").hidden = true;
+    }
+  }
+
+  setLang(lang);
+  load();
+  setInterval(load, 30000);
+})();
+</script>
+</body>
+</html>

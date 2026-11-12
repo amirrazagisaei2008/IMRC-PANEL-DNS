@@ -523,7 +523,10 @@ const DEFAULTS = {
   ref_days: "2",
   remind_days: "3",
   admin_notify: "1",
+  status_level: "ok",
+  status_note: "",
 };
+const STATUS_LEVELS = new Set(["ok", "degraded", "down"]);
 const PLAN_KEY = /^[a-z0-9_]{1,16}$/;
 // هر خط: کلید|نام|روز|قیمت(تومان)
 function parsePlans(text) {
@@ -561,6 +564,8 @@ async function getSettings(db) {
     ref_days: Math.min(365, Math.max(0, parseInt(o.ref_days) || 0)),
     remind_days: Math.min(30, Math.max(0, parseInt(o.remind_days) || 0)),
     admin_notify: o.admin_notify !== "0",
+    status_level: STATUS_LEVELS.has(o.status_level) ? o.status_level : "ok",
+    status_note: String(o.status_note || "").slice(0, 200),
     plans,
     plans_text: plansToText(plans),
   };
@@ -1000,6 +1005,9 @@ async function adminSettings(request, env) {
   try { plans = parsePlans(String(b.plans || "")); } catch (e) { return json({ error: e.message }, 400); }
   const remind = parseInt(b.remind_days);
   if (!(remind >= 0 && remind <= 30)) return json({ error: "یادآوری باید بین ۰ تا ۳۰ روز باشه" }, 400);
+  const stLevel = String(b.status_level || "ok");
+  if (!STATUS_LEVELS.has(stLevel)) return json({ error: "وضعیت سرویس نامعتبره" }, 400);
+  const stNote = String(b.status_note || "").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, "").trim().slice(0, 200);
   const db = await getDB(env);
   const up = (k, v) => db.prepare("INSERT INTO settings(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v").bind(k, v);
   await db.batch([
@@ -1012,6 +1020,8 @@ async function adminSettings(request, env) {
     up("ref_days", String(rd)),
     up("remind_days", String(remind)),
     up("admin_notify", b.admin_notify ? "1" : "0"),
+    up("status_level", stLevel),
+    up("status_note", stNote),
   ]);
   return json({ ok: true });
 }
@@ -1357,10 +1367,73 @@ async function adminExport(env, url) {
   return json({ error: "نوع خروجی نامعتبره" }, 400);
 }
 
+/* ---------------- وضعیت سرویس و سابقه‌ی کانفیگ (فاز ۴) ---------------- */
+const HEARTBEAT_MAX_AGE = 3 * 60000; // اگه کرون بیشتر از این ساکت باشه، مشکوک می‌شه
+const SEVERITY = { ok: 0, degraded: 1, down: 2 };
+const worst = (list) => list.reduce((a, b) => (SEVERITY[b] > SEVERITY[a] ? b : a), "ok");
+
+async function heartbeat(db) {
+  await db.prepare("INSERT INTO settings(k,v) VALUES('cron_ts',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v")
+    .bind(String(Date.now())).run();
+}
+
+// وضعیت عمومی: بدون ورود قابل مشاهده است، پس فقط اطلاعات عمومی برمی‌گردونه
+async function serviceStatus(env) {
+  const now = Date.now();
+  let db = null, dbOk = false, dbMs = null;
+  try {
+    db = await getDB(env);
+    const t0 = Date.now();
+    await db.prepare("SELECT 1 x").first();
+    dbOk = true;
+    dbMs = Date.now() - t0;
+  } catch (e) { dbOk = false; }
+
+  const dbStatus = !dbOk ? "down" : dbMs > 1500 ? "degraded" : "ok";
+  let cronStatus = "degraded";
+  if (dbOk) {
+    const row = await db.prepare("SELECT v FROM settings WHERE k='cron_ts'").first();
+    if (row && now - Number(row.v) <= HEARTBEAT_MAX_AGE) cronStatus = "ok";
+  }
+  const st = dbOk ? await getSettings(db) : { status_level: "ok", status_note: "" };
+  const components = [
+    { id: "api", status: "ok" },
+    { id: "database", status: dbStatus, ms: dbOk ? dbMs : null },
+    { id: "cron", status: cronStatus },
+  ];
+  const notice = st.status_level !== "ok" || st.status_note
+    ? { level: st.status_level, text: st.status_note } : null;
+  return {
+    overall: worst([...components.map((c) => c.status), st.status_level]),
+    updated: now,
+    components,
+    notice,
+  };
+}
+
+// سابقه‌ی ساخت کانفیگ‌های همین حساب (فقط زمان و تنظیمات؛ کلید خصوصی ذخیره نمی‌شه)
+async function configHistory(request, env) {
+  const sess = await getSession(env, request);
+  if (!sess) return json({ error: "login" }, 401);
+  const db = await getDB(env);
+  const vid = "tg" + String(sess.tg_id).replace(/[^0-9]/g, "");
+  const rows = (await db.prepare(
+    "SELECT ts,region,mode,role,name FROM events WHERE vid=? AND type='config' ORDER BY ts DESC, id DESC LIMIT 50"
+  ).bind(vid).all()).results || [];
+  return json({ items: rows });
+}
+
+// صفحه‌های استاتیک جدید (/status و /help) از فایل‌های Public سرو می‌شن
+async function pageAsset(request, env, path) {
+  const url = new URL(request.url);
+  return env.ASSETS.fetch(new Request(url.origin + path, { headers: request.headers }));
+}
+
 /* ---------------- router ---------------- */
 export default {
   // اجرای هر دقیقه (wrangler.jsonc → triggers): یادآوری انقضا و ارسال پیام همگانی
   async scheduled(event, env) {
+    try { await heartbeat(await getDB(env)); } catch (e) { console.error("heartbeat", e); }
     try { await runReminders(env); } catch (e) { console.error("reminders", e); }
     try { await runBroadcasts(env); } catch (e) { console.error("broadcasts", e); }
   },
@@ -1376,6 +1449,9 @@ export default {
         const bad = await adminAuth(request, env); if (bad) return bad;
         return await adminStats(env);
       }
+      if (p === "/api/status" && request.method === "GET") return json(await serviceStatus(env), 200, { "Cache-Control": "no-store" });
+      if (p === "/api/configs/history" && request.method === "GET") return await configHistory(request, env);
+      if ((p === "/status" || p === "/help") && request.method === "GET") return await pageAsset(request, env, p + ".html");
       if (p === "/api/me" && request.method === "GET") return await me(request, env);
       if (p === "/api/member/check" && request.method === "GET") return await memberCheck(request, env);
       if (p === "/api/admin/userlimit" && request.method === "POST") {

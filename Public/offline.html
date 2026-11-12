@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+<meta name="robots" content="noindex"/>
+<meta name="theme-color" content="#070B1A"/>
+<title>آفلاین • IMRC</title>
+<style>
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#070B1A;color:#E8EEFF;font-family:Vazirmatn,system-ui,sans-serif;padding:24px;text-align:center}
+  .box{max-width:360px}
+  h1{font-size:20px;margin:0 0 10px}
+  p{color:#8a97bd;line-height:1.9;font-size:14px}
+  button{margin-top:14px;background:#00E5FF;color:#070B1A;border:0;border-radius:12px;padding:10px 20px;font:inherit;font-weight:700;cursor:pointer}
+  html:not([lang="en"]) .en{display:none}
+  html[lang="en"] .fa{display:none}
+</style>
+</head>
+<body>
+<div class="box">
+  <h1><span class="fa">اینترنت نداری</span><span class="en">You're offline</span></h1>
+  <p><span class="fa">پنل به اینترنت نیاز داره تا کانفیگ بسازه و اطلاعاتت رو بگیره. وقتی وصل شدی دوباره امتحان کن.</span>
+     <span class="en">The panel needs an internet connection to build configs and load your data. Try again once you're connected.</span></p>
+  <button type="button" onclick="location.reload()"><span class="fa">تلاش دوباره</span><span class="en">Try again</span></button>
+</div>
+<script>
+  var l = localStorage.getItem("IMRC_lang") === "en" ? "en" : "fa";
+  document.documentElement.lang = l;
+  document.documentElement.dir = l === "en" ? "ltr" : "rtl";
+</script>
+</body>
+</html>

@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
 <meta name="robots" content="noindex"/>
 <meta name="theme-color" content="#EDF0F4"/>
+<link rel="manifest" href="/manifest.webmanifest"/>
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-title" content="IMRC"/>
 <title>IMRC • CODM Pro Ultra+</title>
 <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;700;800&display=swap" rel="stylesheet"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
@@ -584,6 +588,11 @@ body.theme-tactical .au,body.theme-blood .au,body.theme-operator .au{opacity:.17
       <h3 class="s">هدف پینگ ماهانه</h3>
       <div class="row"><input id="pingGoal" type="number" placeholder="مثلاً 55" value="60" aria-label="هدف پینگ"/><button class="mini" onclick="setPingGoal()">ثبت</button></div>
       <div id="goalStatus" style="margin-top:.4rem;font-size:.85rem;color:var(--dim)"></div>
+      <div class="hist" id="srvHist">
+        <div class="hist-title">سابقه‌ی حساب من (روی سرور) <button class="mini" style="margin-inline-start:auto" onclick="loadServerHistory()">بروزرسانی</button></div>
+        <div style="font-size:11.5px;color:var(--dim);margin:4px 0 6px">فقط زمان و تنظیمات ساخت ذخیره می‌شه؛ کلید و متن کانفیگ روی سرور نیست.</div>
+        <div id="srvHistList"><div style="color:var(--dim);font-size:11.5px;padding:8px">برای دیدن سابقه، بروزرسانی را بزن</div></div>
+      </div>
       <div class="hist">
         <div class="hist-title">تاریخچه کانفیگ‌ها <button class="mini" style="margin-inline-start:auto" onclick="exportHistory()">خروجی CSV</button></div>
         <input id="histSearch" placeholder="جستجو در تاریخچه" oninput="renderHistory()" aria-label="جستجو در تاریخچه"/>
@@ -637,6 +646,9 @@ body.theme-tactical .au,body.theme-blood .au,body.theme-operator .au{opacity:.17
       <div class="grid"><button class="btn btn-sec" onclick="toggleSound()">صدا: <span id="soundState">روشن</span></button><button class="btn btn-sec" onclick="toggleVibrate()">ویبره: <span id="vibState">روشن</span></button></div>
       <h3 class="s">نمایش</h3>
       <div class="grid"><button class="btn btn-sec" onclick="toggleProSilent()">حالت حرفه‌ای (مخفی کردن راهنماها)</button><button class="btn btn-sec" onclick="toggleHideUnused()">مخفی کردن تاریخچه</button></div>
+      <h3 class="s">برنامه و زبان</h3>
+      <div class="grid"><button class="btn btn-sec" id="installBtn" style="display:none" onclick="installApp()">📲 نصب روی گوشی</button><button class="btn btn-sec" id="langToggle" onclick="toggleLang()">English</button></div>
+      <div class="grid"><a class="btn btn-sec" href="/help.html" target="_blank" rel="noopener">❓ راهنما و سوالات</a><a class="btn btn-sec" href="/status.html" target="_blank" rel="noopener">🟢 وضعیت سرویس</a></div>
       <h3 class="s">پشتیبان‌گیری</h3>
       <div class="grid"><button class="btn btn-sec" onclick="backupSettings()">بکاپ</button><button class="btn btn-sec" onclick="restoreSettings()">بازگردانی</button></div>
       <div class="grid" style="margin-top:.7rem"><button class="btn btn-sec" onclick="replayWelcome()">پخش مجدد معرفی</button><button class="btn btn-sec" onclick="clearAllData()" style="color:var(--bad);border-color:var(--bad)">پاک کردن همه داده‌ها</button></div>
@@ -1252,7 +1264,14 @@ drawList();xtNetInfo();
 $("xtNote").value=localStorage.getItem("IMRC_note")||"";
 if(typeof commands!=="undefined"){commands.push({id:"tools",label:"🧰 تب ابزارها",action:()=>switchTab("tools")},{id:"ping",label:"📶 تست پینگ زنده",action:()=>{switchTab("tools");xtPing()}});}
 window.addEventListener("online",()=>toast("🟢 اینترنت وصل شد"));window.addEventListener("offline",()=>toast("🔴 اینترنت قطع شد"));
-if("serviceWorker" in navigator){}
+if("serviceWorker" in navigator){window.addEventListener("load",()=>{navigator.serviceWorker.register("/sw.js").catch(()=>{})})}
+let deferredInstall=null;
+window.addEventListener("beforeinstallprompt",e=>{e.preventDefault();deferredInstall=e;const b=document.getElementById("installBtn");if(b)b.style.display=""});
+window.addEventListener("appinstalled",()=>{deferredInstall=null;const b=document.getElementById("installBtn");if(b)b.style.display="none"});
+window.installApp=function(){
+  if(deferredInstall){deferredInstall.prompt();deferredInstall.userChoice.finally(()=>{deferredInstall=null})}
+  else toast("آیفون: دکمه‌ی Share ← Add to Home Screen. اندروید: منوی ⋮ ← نصب برنامه");
+};
 })();
 
 /* ===== NEW LAYOUT GLUE (config generation logic above is untouched) ===== */
@@ -1569,5 +1588,32 @@ commands.push({id:"chest",label:"صندوق روزانه",action:()=>{switchTab(
   if(typeof loadQuota==="function")loadQuota();
 })();
 </script>
+<script>
+/* ===== سابقه‌ی حساب (روی سرور، فقط زمان و تنظیمات) ===== */
+(function(){
+  const MODE_NAME={ranked:"رنکد",br:"بتل‌رویال",mp:"مالتی‌پلیر"};
+  const ROLE_NAME={attacker:"Attacker",defender:"Defender",support:"Support"};
+  const hEsc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  window.loadServerHistory=async function(){
+    const box=document.getElementById("srvHistList");
+    try{
+      const r=await fetch("/api/configs/history",{credentials:"same-origin",cache:"no-store"});
+      if(r.status===401){box.textContent="برای دیدن سابقه دوباره وارد شو";return}
+      if(!r.ok)throw new Error("status "+r.status);
+      const d=await r.json();
+      window._srvHist=d.items||[];
+      if(!window._srvHist.length){box.innerHTML='<div style="color:var(--dim);font-size:11.5px;padding:8px">هنوز کانفیگی روی این حساب ثبت نشده</div>';return}
+      box.innerHTML=window._srvHist.map((h,i)=>`<div class="hist-item"><div class="hname">${hEsc(h.name||"بدون نام")} • ${hEsc(String(h.region||"").toUpperCase())}</div><div class="hsub">${hEsc(MODE_NAME[h.mode]||h.mode)} • ${hEsc(ROLE_NAME[h.role]||h.role)} • ${hEsc(new Date(h.ts).toLocaleString("fa-IR",{timeZone:"Asia/Tehran"}))}</div><button class="mini" onclick="rebuildFromServer(${i})">ساخت مجدد با همین تنظیمات</button></div>`).join("");
+    }catch(e){box.textContent="خطا در دریافت سابقه، بعداً دوباره امتحان کن"}
+  };
+  window.rebuildFromServer=function(i){
+    const h=(window._srvHist||[])[i];if(!h)return;
+    setRegion(h.region);setMode(h.mode);setRole(h.role);
+    if(h.name)setUser(h.name);
+    switchTab("main");buildAndDownload(false);
+  };
+})();
+</script>
+<script src="/i18n-en.js"></script>
 </body>
 </html>

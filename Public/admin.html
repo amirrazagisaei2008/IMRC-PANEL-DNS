@@ -48,6 +48,7 @@ button{background:var(--pink);border:0;color:#fff;cursor:pointer}
 <body>
 <div id="login" class="login card">
   <h1 style="justify-content:center">🔐 پنل مدیریت IMRC</h1>
+<div style="text-align:center;margin-bottom:10px"><button data-lang-toggle onclick="toggleLang()" style="padding:6px 12px;font-size:12px;background:#232a40">English</button></div>
   <input id="pw" type="password" placeholder="رمز مدیریت" autocomplete="current-password"/>
   <button onclick="doLogin()" style="width:100%">ورود با رمز</button>
   <button onclick="tgLogin()" style="width:100%;background:#2aabee;margin-top:8px">🤖 ورود با تلگرام (ادمین)</button>
@@ -55,7 +56,7 @@ button{background:var(--pink);border:0;color:#fff;cursor:pointer}
 </div>
 
 <div id="app" class="hide">
-  <h1><span>📊 پنل مدیریت IMRC</span><span><button onclick="setupBot()" style="padding:6px 12px;font-size:12px;background:#2aabee">🤖 اتصال ربات</button> <button onclick="logout()" style="padding:6px 12px;font-size:12px;background:#232a40">خروج</button></span></h1>
+  <h1><span>📊 پنل مدیریت IMRC</span><span><button id="langToggle" data-lang-toggle onclick="toggleLang()" style="padding:6px 12px;font-size:12px;background:#232a40">English</button> <button onclick="setupBot()" style="padding:6px 12px;font-size:12px;background:#2aabee">🤖 اتصال ربات</button> <button onclick="logout()" style="padding:6px 12px;font-size:12px;background:#232a40">خروج</button></span></h1>
   <div class="grid">
     <div class="card stat"><b id="sOnline">0</b><span><i class="dot on"></i>آنلاین الان</span></div>
     <div class="card stat"><b id="sConfToday">0</b><span>کانفیگ امروز</span></div>
@@ -89,6 +90,8 @@ button{background:var(--pink);border:0;color:#fff;cursor:pointer}
     <textarea id="setPay"></textarea>
     <label>تعداد روز اشتراک رایگان به ازای هر دعوت (۰ = غیرفعال)</label>
     <input id="setRef" type="number" min="0" max="365" inputmode="numeric"/>
+    <label>اعتبار کیف پول به ازای هر دعوت موفق (تومان، ۰ = غیرفعال). دعوت‌کننده موقع خرید می‌تونه ازش استفاده کنه.</label>
+    <input id="setRefCredit" type="number" min="0" max="10000000" inputmode="numeric"/>
     <label>یادآوری انقضا: چند روز قبل از پایان اشتراک به کاربر پیام داده بشه (۰ = غیرفعال)</label>
     <input id="setRemind" type="number" min="0" max="30" inputmode="numeric"/>
     <label style="display:flex;align-items:center;gap:8px;color:var(--tx)"><input id="setNotify" type="checkbox" style="width:auto"/> اعلان به تلگرام ادمین: کاربر جدید و رسیدن کاربر به سقف</label>
@@ -100,6 +103,12 @@ button{background:var(--pink);border:0;color:#fff;cursor:pointer}
     </select>
     <label>پیام وضعیت برای کاربران (اختیاری، حداکثر ۲۰۰ کاراکتر — وقتی خالی باشه و وضعیت فعال باشه، نمایش داده نمی‌شه)</label>
     <textarea id="setStatusNote" maxlength="200" placeholder="مثلاً: به‌خاطر به‌روزرسانی، ساخت کانفیگ تا ۲۰ دقیقه کند است."></textarea>
+    <label>پیام خوش‌آمد ربات (خالی = متن پیش‌فرض)</label>
+    <textarea id="setMsgWelcome" maxlength="1000"></textarea>
+    <label>متن یادآور انقضا — {days} = تعداد روز، {date} = تاریخ</label>
+    <textarea id="setMsgReminder" maxlength="1000"></textarea>
+    <label>متن تأیید پرداخت — {plan} = نام پلن، {days} = روز، {date} = تاریخ انقضا</label>
+    <textarea id="setMsgApproved" maxlength="1000"></textarea>
     <button onclick="saveSettings()" style="margin-top:12px;width:100%">ذخیره تنظیمات</button>
     <div style="font-size:11px;color:var(--mut);margin-top:8px">این‌ها مقدار پیش‌فرض همه‌ی کاربرانه. سهمیه ساعت ۰۰:۰۰ به وقت ایران ریست می‌شه (هفته از شنبه، ماه شمسی). برای یک کاربر خاص، از لیست پایین دکمه‌ی «⚙️ سقف» رو بزن.</div>
   </div>
@@ -187,6 +196,72 @@ button{background:var(--pink);border:0;color:#fff;cursor:pointer}
   </div>
   <div class="card" id="users"></div>
 
+  <h2>👥 عملیات گروهی (روی نتیجه‌ی فیلتر و جستجوی بالا)</h2>
+  <div class="card frm">
+    <select id="bulkAct" style="width:100%;font:inherit;border-radius:10px;border:1px solid var(--line);background:#0e1220;color:var(--tx);padding:10px 12px">
+      <option value="grant">⭐ افزودن اشتراک</option>
+      <option value="ban">🚫 مسدود کردن</option>
+      <option value="unban">✅ رفع مسدودی</option>
+    </select>
+    <input id="bulkDays" type="number" min="1" max="3650" inputmode="numeric" placeholder="تعداد روز (فقط برای افزودن اشتراک)" style="margin-top:8px"/>
+    <input id="bulkReason" maxlength="100" placeholder="دلیل مسدودسازی (اختیاری)" style="margin-top:8px"/>
+    <div class="btns" style="justify-content:space-between;align-items:center">
+      <span id="bulkInfo" style="font-size:12px;color:var(--mut)"></span>
+      <span><button onclick="bulkPreview()" style="background:#232a40">پیش‌نمایش</button><button onclick="bulkRun()">اجرا</button></span>
+    </div>
+    <div style="font-size:11px;color:var(--mut);margin-top:6px">حداکثر ۵۰۰ کاربر در هر عملیات. اول پیش‌نمایش بگیر؛ همان فیلتر پیش‌نمایش اجرا می‌شود و اگر تعداد کاربرها عوض شده باشد، عملیات لغو می‌شود.</div>
+  </div>
+
+  <h2>💵 ثبت پرداخت نقدی یا دستی</h2>
+  <div class="card frm">
+    <input id="pmTg" inputmode="numeric" placeholder="آیدی عددی تلگرام کاربر"/>
+    <input id="pmPlan" placeholder="کلید پلن (مثلاً m)" style="margin-top:8px"/>
+    <input id="pmAmount" type="number" min="0" inputmode="numeric" placeholder="مبلغ به تومان (خالی = قیمت پلن)" style="margin-top:8px"/>
+    <input id="pmNote" maxlength="80" placeholder="یادداشت (مثلاً: کارت به کارت دستی)" style="margin-top:8px"/>
+    <div class="btns"><button onclick="manualPay()">ثبت و فعال‌سازی</button></div>
+    <div style="font-size:11px;color:var(--mut);margin-top:6px">این پرداخت در گزارش درآمد حساب می‌شود و در گزارش فعالیت ثبت می‌شود.</div>
+  </div>
+
+  <h2>📊 شاخص‌های رشد</h2>
+  <div class="grid" id="insights" style="grid-template-columns:repeat(2,1fr)"></div>
+
+  <h2>🏆 برترین دعوت‌کننده‌ها</h2>
+  <div class="card" id="refs"></div>
+
+  <h2>🎁 کیف پول اعتبار دعوت</h2>
+  <div class="card frm">
+    <div id="walletInfo" style="font-size:12px;color:var(--mut);margin-bottom:8px"></div>
+    <div id="walletList"></div>
+    <input id="wTg" inputmode="numeric" placeholder="آیدی عددی تلگرام کاربر" style="margin-top:10px"/>
+    <input id="wDelta" type="number" placeholder="مبلغ به تومان؛ مثبت = افزایش، منفی = کاهش" style="margin-top:8px"/>
+    <input id="wReason" maxlength="80" placeholder="دلیل (مثلاً: جبران خطا)" style="margin-top:8px"/>
+    <div class="btns"><button onclick="walletAdjust()">ثبت تغییر</button></div>
+  </div>
+
+  <h2>⏱ آپ‌تایم و حوادث</h2>
+  <div class="card frm">
+    <div id="upInfo" style="font-size:13px;color:var(--mut);margin-bottom:8px"></div>
+    <input id="incTitle" maxlength="120" placeholder="عنوان حادثه (مثلاً: اختلال در دریافت کانفیگ)"/>
+    <select id="incLevel" style="width:100%;font:inherit;border-radius:10px;border:1px solid var(--line);background:#0e1220;color:var(--tx);padding:10px 12px;margin-top:8px">
+      <option value="degraded">کند / ناپایدار</option>
+      <option value="down">قطع</option>
+    </select>
+    <textarea id="incBody" maxlength="600" placeholder="توضیح برای کاربران (اختیاری؛ تگ HTML نمایش داده نمی‌شه)" style="margin-top:8px"></textarea>
+    <div class="btns"><button onclick="createIncident()">ثبت حادثه</button></div>
+    <div style="font-size:11px;color:var(--mut);margin-top:6px">حادثه روی صفحه‌ی وضعیت سرویس نمایش داده می‌شه. بعد از رفع مشکل «بستن» رو بزن.</div>
+  </div>
+  <div class="card" id="incList"></div>
+
+  <h2>💾 پشتیبان و نگهداری داده</h2>
+  <div class="card frm">
+    <div id="retInfo" style="font-size:12px;color:var(--mut);margin-bottom:8px"></div>
+    <div class="btns"><button onclick="downloadBackup()" style="background:#232a40">📥 دانلود پشتیبان (JSON)</button><button onclick="runRetention()" style="background:#232a40">🧹 اجرای نگهداری الان</button></div>
+    <div style="font-size:11px;color:var(--mut);margin-top:6px">پشتیبان شامل کاربران، اشتراک‌ها، رسیدها و تیکت‌هاست؛ کلید کانفیگ، سشن یا توکن ورود در آن نیست. فایل را امن نگه دار.</div>
+  </div>
+
+  <h2>🧾 گزارش فعالیت ادمین</h2>
+  <div class="card" id="audit"></div>
+
   <h2>فعالیت‌های اخیر</h2>
   <div class="card" id="events"></div>
   <p style="color:var(--mut);font-size:11px;text-align:center">هر ۱۵ ثانیه خودکار به‌روز می‌شود • <span id="upd"></span></p>
@@ -245,11 +320,11 @@ function render(d){
   // کاربران: با loadUsers() گرفته می‌شن (جستجو و فیلتر و صفحه‌بندی)
 
   $("events").innerHTML=d.events.map(e=>`<div class="ev"><b>${esc(e.tg_name||(e.tg_username?"@"+e.tg_username:"#"+e.vid.slice(0,6)))}</b> — ${evText(e)}<time>${clock(e.ts)}</time></div>`).join("")||'<span style="color:var(--mut)">هنوز فعالیتی نیست</span>';
-  if(d.settings&&!window._setLoaded){window._setLoaded=true;$("setFree").value=d.settings.free_limit;$("setSub").value=d.settings.sub_limit;$("setText").value=d.settings.buy_text;$("setFree2").value=d.settings.free_countries;$("setPlans").value=d.settings.plans_text;$("setPay").value=d.settings.pay_text;$("setRef").value=d.settings.ref_days;$("setRemind").value=d.settings.remind_days;$("setNotify").checked=!!d.settings.admin_notify;$("setStatus").value=d.settings.status_level||"ok";$("setStatusNote").value=d.settings.status_note||""}
+  if(d.settings&&!window._setLoaded){window._setLoaded=true;$("setFree").value=d.settings.free_limit;$("setSub").value=d.settings.sub_limit;$("setText").value=d.settings.buy_text;$("setFree2").value=d.settings.free_countries;$("setPlans").value=d.settings.plans_text;$("setPay").value=d.settings.pay_text;$("setRef").value=d.settings.ref_days;$("setRefCredit").value=d.settings.ref_credit;$("setRemind").value=d.settings.remind_days;$("setNotify").checked=!!d.settings.admin_notify;$("setStatus").value=d.settings.status_level||"ok";$("setStatusNote").value=d.settings.status_note||"";$("setMsgWelcome").value=d.settings.msg_welcome||"";$("setMsgReminder").value=d.settings.msg_reminder||"";$("setMsgApproved").value=d.settings.msg_approved||""}
   $("upd").textContent="آخرین به‌روزرسانی: "+new Date().toLocaleTimeString("fa-IR");
 }
 async function start(){
-  $("login").classList.add("hide");$("app").classList.remove("hide");loadCodes();loadTickets();loadBroadcasts();window._rl=Date.now();loadReport();
+  $("login").classList.add("hide");$("app").classList.remove("hide");loadCodes();loadTickets();loadBroadcasts();loadInsights();loadRefs();loadAudit();loadRetention();loadWallets();loadIncidents();window._rl=Date.now();loadReport();
   clearInterval(timer);timer=setInterval(()=>{if(!document.hidden){load();loadTickets();loadBroadcasts();if(window._tid)openTicket(window._tid,true)}},15000);
 }
 async function doLogin(){
@@ -306,7 +381,7 @@ async function revoke(id){
   try{await post("/api/admin/sub",{tg_id:id,days:0});load()}catch(e){alert("❌ "+e.message)}
 }
 async function saveSettings(){
-  try{await post("/api/admin/settings",{free_limit:$("setFree").value,sub_limit:$("setSub").value,buy_text:$("setText").value,free_countries:$("setFree2").value,plans:$("setPlans").value,pay_text:$("setPay").value,ref_days:$("setRef").value,remind_days:$("setRemind").value,admin_notify:$("setNotify").checked,status_level:$("setStatus").value,status_note:$("setStatusNote").value});alert("✅ ذخیره شد.");window._setLoaded=false;load()}catch(e){alert("❌ "+e.message)}
+  try{await post("/api/admin/settings",{free_limit:$("setFree").value,sub_limit:$("setSub").value,buy_text:$("setText").value,free_countries:$("setFree2").value,plans:$("setPlans").value,pay_text:$("setPay").value,ref_days:$("setRef").value,ref_credit:$("setRefCredit").value,remind_days:$("setRemind").value,admin_notify:$("setNotify").checked,status_level:$("setStatus").value,status_note:$("setStatusNote").value,msg_welcome:$("setMsgWelcome").value,msg_reminder:$("setMsgReminder").value,msg_approved:$("setMsgApproved").value});alert("✅ ذخیره شد.");window._setLoaded=false;load()}catch(e){alert("❌ "+e.message)}
 }
 let tgTimer;
 async function tgLogin(){
@@ -448,8 +523,120 @@ async function setupBot(){
   }catch(e){alert("❌ خطا در اتصال")}
 }
 async function logout(){try{await fetch("/api/admin/logout",{method:"POST"})}catch(e){}sessionStorage.removeItem("imrc_admin");location.reload()}
+/* ===== فاز ۵: عملیات گروهی، پرداخت دستی، شاخص‌ها، ممیزی، پشتیبان، نگهداری ===== */
+async function getJ(path){const r=await fetch(path,{headers:authH()});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||"خطا");return d}
+function esc5(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+const ACT_NAME={grant:"افزودن اشتراک",ban:"مسدودسازی",unban:"رفع مسدودی"};
+let bulkSnap=null;
+async function bulkPreview(){
+  const snap={action:$("bulkAct").value,days:$("bulkDays").value,reason:$("bulkReason").value,filter:$("uf").value,q:$("uq").value.trim()};
+  try{
+    const d=await post("/api/admin/bulk",Object.assign({dry_run:true},snap));
+    bulkSnap=Object.assign({count:d.count},snap);
+    $("bulkInfo").textContent=`${ACT_NAME[snap.action]}: ${fa(d.count)} کاربر (حداکثر ${fa(d.max)})`;
+  }catch(e){bulkSnap=null;$("bulkInfo").textContent="❌ "+e.message}
+}
+async function bulkRun(){
+  if(!bulkSnap)return alert("اول پیش‌نمایش بگیر");
+  if(!confirm(`${ACT_NAME[bulkSnap.action]} روی ${fa(bulkSnap.count)} کاربر اعمال شود؟`))return;
+  const snap=bulkSnap;
+  try{
+    const d=await post("/api/admin/bulk",Object.assign({},snap,{dry_run:false,expect:snap.count}));
+    alert(`✅ ${fa(d.affected)} کاربر`);
+    bulkSnap=null;$("bulkInfo").textContent="";
+    loadUsers();loadAudit();
+  }catch(e){alert("❌ "+e.message);bulkSnap=null;$("bulkInfo").textContent=""}
+}
+async function manualPay(){
+  const tg=$("pmTg").value.trim(),plan=$("pmPlan").value.trim(),amount=$("pmAmount").value,note=$("pmNote").value.trim();
+  if(!tg||!plan)return alert("آیدی و کلید پلن را وارد کن");
+  if(!confirm(`پرداخت دستی برای ${tg} با پلن ${plan} ثبت شود؟`))return;
+  try{
+    await post("/api/admin/manual-payment",{tg_id:tg,plan:plan,amount:amount,note:note});
+    alert("✅ ثبت و اشتراک فعال شد");
+    $("pmTg").value="";$("pmAmount").value="";$("pmNote").value="";
+    loadAudit();loadReport();
+  }catch(e){alert("❌ "+e.message)}
+}
+async function loadInsights(){
+  try{
+    const d=await getJ("/api/admin/insights");
+    const cards=[["فعال امروز",d.dau],["فعال ۷ روز",d.wau],["فعال ۳۰ روز",d.mau],["جدید ۷ روز",d.new7],["کاربران ربات",d.tg_users],["خریداران",d.payers]];
+    $("insights").innerHTML=cards.map(([k,v])=>`<div class="card stat"><b>${fa(v)}</b><span>${k}</span></div>`).join("")
+      +`<div class="card stat"><b>${d.retention7.pct===null?"–":fa(d.retention7.pct)+"٪"}</b><span>نگهداری ۷ روزه (${fa(d.retention7.kept)} از ${fa(d.retention7.size)})</span></div>`;
+  }catch(e){$("insights").textContent="❌ "+e.message}
+}
+async function loadRefs(){
+  try{
+    const d=await getJ("/api/admin/referrals");
+    $("refs").innerHTML=d.top.length?d.top.map((r,i)=>`<div class="row"><span>${i+1}. ${esc5(r.name||r.username||r.referrer)}</span><span class="num">${fa(r.n)} دعوت • ${fa(r.rewarded)} پاداش</span></div>`).join(""):'<span style="color:var(--mut)">هنوز دعوتی ثبت نشده</span>';
+  }catch(e){$("refs").textContent="❌ "+e.message}
+}
+async function loadAudit(){
+  try{
+    const d=await getJ("/api/admin/audit?limit=200");
+    $("audit").innerHTML=d.items.length?d.items.map(a=>`<div class="row"><div><b>${esc5(a.action)}</b> <span style="color:var(--mut)">${esc5(a.target)}</span><div class="sub">${esc5(a.actor)} • ${esc5(a.detail)}</div></div><span class="num" style="font-size:11px">${new Date(a.ts).toLocaleString("fa-IR",{timeZone:"Asia/Tehran"})}</span></div>`).join(""):'<span style="color:var(--mut)">هنوز اقدامی ثبت نشده</span>';
+  }catch(e){$("audit").textContent="❌ "+e.message}
+}
+async function loadRetention(){
+  try{
+    const d=await getJ("/api/admin/retention");
+    $("retInfo").textContent=d.last?`آخرین اجرا: ${new Date(d.last.at).toLocaleString("fa-IR",{timeZone:"Asia/Tehran"})} • حذف‌شده: رویداد ${fa(d.last.events)}، لاگ ${fa(d.last.audit_log)}، نشست ${fa(d.last.sessions)}`:"هنوز اجرا نشده (هر روز ساعت ۰۴:۰۰ به وقت تهران)";
+  }catch(e){$("retInfo").textContent="❌ "+e.message}
+}
+async function runRetention(){
+  if(!confirm("نگهداری داده الان اجرا شود؟ داده‌های قدیمی و موقت پاک می‌شوند."))return;
+  try{await post("/api/admin/retention",{});loadRetention();loadAudit()}catch(e){alert("❌ "+e.message)}
+}
+async function downloadBackup(){
+  try{
+    const r=await fetch("/api/admin/backup",{headers:authH()});
+    if(!r.ok)throw new Error("خطا در دریافت پشتیبان");
+    const b=await r.blob();const a=document.createElement("a");
+    a.href=URL.createObjectURL(b);a.download="imrc-backup.json";document.body.appendChild(a);a.click();a.remove();
+    loadAudit();
+  }catch(e){alert("❌ "+e.message)}
+}
+/* ===== فاز ۵ (ادامه): کیف پول، حوادث و آپ‌تایم ===== */
+async function loadWallets(){
+  try{
+    const d=await getJ("/api/admin/wallets");
+    $("walletInfo").textContent=`${fa(d.holders)} نفر اعتبار دارن • مجموع: ${fa(d.total)} تومان (بدهی به کاربران)`;
+    $("walletList").innerHTML=d.items.length?d.items.map(w=>`<div class="row"><span>${esc5(w.name||w.tg_id)} <span class="sub">${esc5(w.tg_id)}</span></span><span class="num">${fa(w.balance)} تومان</span></div>`).join(""):'<span style="color:var(--mut)">اعتباری ثبت نشده</span>';
+  }catch(e){$("walletInfo").textContent="❌ "+e.message}
+}
+async function walletAdjust(){
+  const tg=$("wTg").value.trim(),delta=parseInt($("wDelta").value),reason=$("wReason").value.trim();
+  if(!tg||!delta)return alert("آیدی و مبلغ (غیرصفر) رو وارد کن");
+  if(!confirm(`${fa(delta)} تومان برای ${tg} ثبت شود؟`))return;
+  try{
+    const d=await post("/api/admin/wallet",{tg_id:tg,delta:delta,reason:reason});
+    alert(`✅ موجودی جدید: ${fa(d.balance)} تومان`);
+    $("wTg").value="";$("wDelta").value="";$("wReason").value="";
+    loadWallets();loadAudit();
+  }catch(e){alert("❌ "+e.message)}
+}
+async function loadIncidents(){
+  try{
+    const d=await getJ("/api/admin/incidents");
+    $("upInfo").textContent=d.uptime===null?"آپ‌تایم: هنوز داده‌ای ثبت نشده":`آپ‌تایم ۳۰ روز اخیر: ${Number(d.uptime).toLocaleString("fa-IR",{maximumFractionDigits:2})}٪ (${fa(d.samples)} از ${fa(d.expected)} نمونه؛ گپ کرون = خاموش)`;
+    $("incList").innerHTML=d.items.length?d.items.map(i=>`<div class="row"><div><b>${esc5(i.title)}</b> <span style="color:var(--mut)">${i.level==="down"?"قطع":"کند"}</span>${i.body?`<div class="sub">${esc5(i.body)}</div>`:""}<div class="sub">${new Date(i.started).toLocaleString("fa-IR",{timeZone:"Asia/Tehran"})} • ${i.resolved?"رفع شد":"باز"}</div></div><span class="btns">${i.resolved?"":`<button onclick="resolveIncident(${i.id})">بستن</button>`}<button onclick="deleteIncident(${i.id})" style="background:#3a1d2a">حذف</button></span></div>`).join(""):'<span style="color:var(--mut)">حادثه‌ای ثبت نشده</span>';
+  }catch(e){$("upInfo").textContent="❌ "+e.message}
+}
+async function createIncident(){
+  const title=$("incTitle").value.trim();
+  if(!title)return alert("عنوان رو بنویس");
+  try{
+    await post("/api/admin/incidents",{action:"create",title:title,level:$("incLevel").value,body:$("incBody").value});
+    $("incTitle").value="";$("incBody").value="";
+    loadIncidents();loadAudit();
+  }catch(e){alert("❌ "+e.message)}
+}
+async function resolveIncident(id){try{await post("/api/admin/incidents",{action:"resolve",id:id});loadIncidents();loadAudit()}catch(e){alert("❌ "+e.message)}}
+async function deleteIncident(id){if(!confirm("این حادثه حذف شود؟"))return;try{await post("/api/admin/incidents",{action:"delete",id:id});loadIncidents();loadAudit()}catch(e){alert("❌ "+e.message)}}
 $("pw").addEventListener("keydown",e=>{if(e.key==="Enter")doLogin()});
 load().then(ok=>{if(ok)start();else sessionStorage.removeItem("imrc_admin")});
 </script>
+<script src="/i18n-en.js"></script>
 </body>
 </html>

@@ -49,7 +49,8 @@ button{background:var(--pink);border:0;color:#fff;cursor:pointer}
 <div id="login" class="login card">
   <h1 style="justify-content:center">🔐 پنل مدیریت IMRC</h1>
   <input id="pw" type="password" placeholder="رمز مدیریت" autocomplete="current-password"/>
-  <button onclick="doLogin()" style="width:100%">ورود</button>
+  <button onclick="doLogin()" style="width:100%">ورود با رمز</button>
+  <button onclick="tgLogin()" style="width:100%;background:#2aabee;margin-top:8px">🤖 ورود با تلگرام (ادمین)</button>
   <div class="err" id="err"></div>
 </div>
 
@@ -82,8 +83,25 @@ button{background:var(--pink);border:0;color:#fff;cursor:pointer}
     <input id="setFree2" dir="ltr" placeholder="tr,de,ae"/>
     <label>پیام خرید اشتراک (وقتی سقف تموم شد نشون داده می‌شه — آیدی تلگرام یا راه پرداخت رو اینجا بنویس)</label>
     <textarea id="setText"></textarea>
+    <label>پلن‌های اشتراک (هر خط: کلید|نام|روز|قیمت به تومان — مثلاً m|ماهانه|30|150000)</label>
+    <textarea id="setPlans" dir="ltr" style="text-align:left"></textarea>
+    <label>متن پرداخت (شماره کارت و...) — در پیام خرید ربات نمایش داده می‌شه</label>
+    <textarea id="setPay"></textarea>
+    <label>تعداد روز اشتراک رایگان به ازای هر دعوت (۰ = غیرفعال)</label>
+    <input id="setRef" type="number" min="0" max="365" inputmode="numeric"/>
     <button onclick="saveSettings()" style="margin-top:12px;width:100%">ذخیره تنظیمات</button>
     <div style="font-size:11px;color:var(--mut);margin-top:8px">این‌ها مقدار پیش‌فرض همه‌ی کاربرانه. سهمیه ساعت ۰۰:۰۰ به وقت ایران ریست می‌شه (هفته از شنبه، ماه شمسی). برای یک کاربر خاص، از لیست پایین دکمه‌ی «⚙️ سقف» رو بزن.</div>
+  </div>
+
+  <h2>🎟 کدهای تخفیف</h2>
+  <div class="card frm">
+    <div style="font-size:11px;color:var(--mut)">کاربر کد رو توی ربات با /code وارد می‌کنه. تأیید رسید و پلن‌ها هم از طریق ربات انجام می‌شه.</div>
+    <label>کد (انگلیسی و عدد)</label><input id="cCode" dir="ltr" placeholder="SPRING20"/>
+    <label>درصد تخفیف</label><input id="cPct" type="number" min="1" max="100" value="20" inputmode="numeric"/>
+    <label>حداکثر دفعات استفاده (۰ = نامحدود)</label><input id="cMax" type="number" min="0" value="0" inputmode="numeric"/>
+    <label>مدت اعتبار به روز (۰ = بدون انقضا)</label><input id="cDays" type="number" min="0" value="0" inputmode="numeric"/>
+    <button onclick="addCode()" style="margin-top:12px;width:100%">ساخت کد</button>
+    <div id="codes" style="margin-top:12px"></div>
   </div>
 
   <h2>کاربران (جدیدترین فعالیت اول)</h2>
@@ -116,11 +134,12 @@ function evText(e){
 const ago=(ms,now)=>{const s=Math.max(0,Math.round((now-ms)/1000));if(s<60)return fa(s)+" ثانیه پیش";if(s<3600)return fa(Math.round(s/60))+" دقیقه پیش";if(s<86400)return fa(Math.round(s/3600))+" ساعت پیش";return fa(Math.round(s/86400))+" روز پیش"};
 const clock=ms=>new Date(ms).toLocaleString("fa-IR",{hour:"2-digit",minute:"2-digit",day:"numeric",month:"short"});
 
+function authH(){return pw?{Authorization:"Bearer "+pw}:{}}
 async function load(){
   let r;
-  try{r=await fetch("/api/admin/stats",{headers:{Authorization:"Bearer "+pw}})}catch(e){$("err").textContent="خطا در اتصال";return false}
-  if(r.status===401){$("err").textContent="رمز اشتباه است";return false}
-  const d=await r.json();
+  try{r=await fetch("/api/admin/stats",{headers:authH()})}catch(e){$("err").textContent="خطا در اتصال";return false}
+  if(r.status===401){if(pw)$("err").textContent="رمز اشتباه است";return false}
+  const d=await r.json().catch(()=>({}));
   if(!r.ok){$("err").textContent=d.error||"خطای سرور";return false}
   render(d);return true;
 }
@@ -156,11 +175,11 @@ function render(d){
       <div class="sub" style="direction:rtl;text-align:left">${fa(v.actions)} فعالیت • ${on?"آنلاین":ago(v.last_seen,now)}</div></div></div>`}).join("")||'<span style="color:var(--mut)">هنوز کاربری نیست</span>';
 
   $("events").innerHTML=d.events.map(e=>`<div class="ev"><b>${esc(e.tg_name||(e.tg_username?"@"+e.tg_username:"#"+e.vid.slice(0,6)))}</b> — ${evText(e)}<time>${clock(e.ts)}</time></div>`).join("")||'<span style="color:var(--mut)">هنوز فعالیتی نیست</span>';
-  if(d.settings&&!window._setLoaded){window._setLoaded=true;$("setFree").value=d.settings.free_limit;$("setSub").value=d.settings.sub_limit;$("setText").value=d.settings.buy_text;$("setFree2").value=d.settings.free_countries}
+  if(d.settings&&!window._setLoaded){window._setLoaded=true;$("setFree").value=d.settings.free_limit;$("setSub").value=d.settings.sub_limit;$("setText").value=d.settings.buy_text;$("setFree2").value=d.settings.free_countries;$("setPlans").value=d.settings.plans_text;$("setPay").value=d.settings.pay_text;$("setRef").value=d.settings.ref_days}
   $("upd").textContent="آخرین به‌روزرسانی: "+new Date().toLocaleTimeString("fa-IR");
 }
 async function start(){
-  $("login").classList.add("hide");$("app").classList.remove("hide");
+  $("login").classList.add("hide");$("app").classList.remove("hide");loadCodes();
   clearInterval(timer);timer=setInterval(()=>{if(!document.hidden)load()},15000);
 }
 async function doLogin(){
@@ -168,7 +187,7 @@ async function doLogin(){
   if(await load()){sessionStorage.setItem("imrc_admin",pw);start()}
 }
 async function post(path,body){
-  const r=await fetch(path,{method:"POST",headers:{Authorization:"Bearer "+pw,"Content-Type":"application/json"},body:JSON.stringify(body)});
+  const r=await fetch(path,{method:"POST",headers:Object.assign({"Content-Type":"application/json"},authH()),body:JSON.stringify(body)});
   const d=await r.json().catch(()=>({}));
   if(!r.ok)throw new Error(d.error||"خطا");
   return d;
@@ -217,18 +236,55 @@ async function revoke(id){
   try{await post("/api/admin/sub",{tg_id:id,days:0});load()}catch(e){alert("❌ "+e.message)}
 }
 async function saveSettings(){
-  try{await post("/api/admin/settings",{free_limit:$("setFree").value,sub_limit:$("setSub").value,buy_text:$("setText").value,free_countries:$("setFree2").value});alert("✅ ذخیره شد.")}catch(e){alert("❌ "+e.message)}
+  try{await post("/api/admin/settings",{free_limit:$("setFree").value,sub_limit:$("setSub").value,buy_text:$("setText").value,free_countries:$("setFree2").value,plans:$("setPlans").value,pay_text:$("setPay").value,ref_days:$("setRef").value});alert("✅ ذخیره شد.");window._setLoaded=false;load()}catch(e){alert("❌ "+e.message)}
+}
+let tgTimer;
+async function tgLogin(){
+  $("err").textContent="";
+  let d;
+  try{const r=await fetch("/api/admin/tg/start",{method:"POST"});d=await r.json();if(!r.ok)throw new Error(d.error||"خطا")}
+  catch(e){$("err").textContent="❌ "+e.message;return}
+  window.open(d.url,"_blank");
+  $("err").textContent="توی تلگرام روی «Start» بزن تا ورود تأیید بشه…";
+  const until=Date.now()+180000;
+  clearInterval(tgTimer);
+  tgTimer=setInterval(async()=>{
+    if(Date.now()>until){clearInterval(tgTimer);$("err").textContent="زمان تموم شد. دوباره امتحان کن.";return}
+    const r=await fetch("/api/admin/tg/check?token="+d.token).catch(()=>null);
+    if(!r)return;
+    const s=await r.json().catch(()=>({}));
+    if(s.status==="ok"){clearInterval(tgTimer);if(await load())start()}
+    else if(s.status==="expired"){clearInterval(tgTimer);$("err").textContent="لینک منقضی شد. دوباره امتحان کن."}
+  },2000);
+}
+async function loadCodes(){
+  const r=await fetch("/api/admin/codes",{headers:authH()}).catch(()=>null);
+  if(!r||!r.ok)return;
+  const d=await r.json();
+  $("codes").innerHTML=d.codes.map(c=>{
+    const exp=c.expires?new Date(c.expires).toLocaleDateString("fa-IR"):"بدون انقضا";
+    const used=fa(c.used)+" / "+(c.max_uses?fa(c.max_uses):"∞");
+    const off=c.active?"":' <span class="badge" style="background:rgba(255,84,112,.15);color:var(--red)">غیرفعال</span>';
+    const btn=c.active?`<button onclick="toggleCode('${esc(c.code)}',true)">غیرفعال کن</button>`:`<button onclick="toggleCode('${esc(c.code)}',false)">فعال کن</button>`;
+    return `<div class="row"><div><b dir="ltr">${esc(c.code)}</b> <span class="badge">${fa(c.percent)}٪</span>${off}<div class="sub">استفاده: ${used} • ${exp}</div></div><div class="btns" style="margin:0">${btn}</div></div>`;
+  }).join("")||'<span style="color:var(--mut)">کدی ساخته نشده</span>';
+}
+async function addCode(){
+  try{await post("/api/admin/codes",{code:$("cCode").value,percent:$("cPct").value,max_uses:$("cMax").value,days:$("cDays").value});$("cCode").value="";loadCodes()}catch(e){alert("❌ "+e.message)}
+}
+async function toggleCode(code,off){
+  try{await post("/api/admin/codes",{code,disable:off});loadCodes()}catch(e){alert("❌ "+e.message)}
 }
 async function setupBot(){
   try{
-    const r=await fetch("/api/admin/webhook",{method:"POST",headers:{Authorization:"Bearer "+pw}});
+    const r=await fetch("/api/admin/webhook",{method:"POST",headers:authH()});
     const d=await r.json();
     alert(r.ok&&d.ok?"✅ ربات @"+d.bot+" وصل شد.":"❌ "+(d.error||d.description||"خطا"));
   }catch(e){alert("❌ خطا در اتصال")}
 }
-function logout(){sessionStorage.removeItem("imrc_admin");location.reload()}
+async function logout(){try{await fetch("/api/admin/logout",{method:"POST"})}catch(e){}sessionStorage.removeItem("imrc_admin");location.reload()}
 $("pw").addEventListener("keydown",e=>{if(e.key==="Enter")doLogin()});
-if(pw)load().then(ok=>{if(ok)start();else sessionStorage.removeItem("imrc_admin")});
+load().then(ok=>{if(ok)start();else sessionStorage.removeItem("imrc_admin")});
 </script>
 </body>
 </html>

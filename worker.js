@@ -70,9 +70,31 @@ function getDB(env) {
         env.DB.prepare("CREATE TABLE IF NOT EXISTS user_limits(tg_id TEXT PRIMARY KEY, lim INTEGER, period TEXT, unlock INTEGER DEFAULT 0, until INTEGER)"),
         env.DB.prepare("CREATE TABLE IF NOT EXISTS bans(tg_id TEXT PRIMARY KEY, reason TEXT, ts INTEGER)"),
         env.DB.prepare("CREATE TABLE IF NOT EXISTS members(tg_id TEXT PRIMARY KEY, ok INTEGER, checked INTEGER)"),
+        env.DB.prepare("CREATE TABLE IF NOT EXISTS users(tg_id TEXT PRIMARY KEY, created INTEGER, logged INTEGER DEFAULT 0)"),
+        env.DB.prepare(`CREATE TABLE IF NOT EXISTS receipts(
+          id INTEGER PRIMARY KEY AUTOINCREMENT, tg_id TEXT, ts INTEGER, file_id TEXT,
+          plan TEXT, amount INTEGER, code TEXT, status TEXT DEFAULT 'pending', decided INTEGER, decided_by TEXT)`),
+        env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_receipts_tg ON receipts(tg_id, status)"),
+        env.DB.prepare("CREATE TABLE IF NOT EXISTS pending_buy(tg_id TEXT PRIMARY KEY, plan TEXT, code TEXT, ts INTEGER)"),
+        env.DB.prepare(`CREATE TABLE IF NOT EXISTS discount_codes(
+          code TEXT PRIMARY KEY, percent INTEGER, max_uses INTEGER DEFAULT 0, used INTEGER DEFAULT 0,
+          expires INTEGER, active INTEGER DEFAULT 1, created INTEGER)`),
+        env.DB.prepare("CREATE TABLE IF NOT EXISTS refs(invitee TEXT PRIMARY KEY, referrer TEXT, ts INTEGER, rewarded INTEGER DEFAULT 0)"),
+        env.DB.prepare("CREATE TABLE IF NOT EXISTS admin_tokens(token TEXT PRIMARY KEY, created INTEGER, verified INTEGER DEFAULT 0)"),
+        env.DB.prepare("CREATE TABLE IF NOT EXISTS admin_sessions(sid TEXT PRIMARY KEY, created INTEGER)"),
+        env.DB.prepare("CREATE TABLE IF NOT EXISTS auth_fails(k TEXT PRIMARY KEY, fails INTEGER, first INTEGER, locked_until INTEGER)"),
       ]);
       for (const col of ["tg_id", "tg_name", "tg_username"]) {
         try { await env.DB.prepare(`ALTER TABLE visitors ADD COLUMN ${col} TEXT`).run(); } catch (e) { /* already exists */ }
+      }
+      // یک‌بار: کاربرهای قبلی رو به جدول users منتقل کن (قبلاً واردشده حساب می‌شن → برای دعوت جایزه نمی‌گیرن)
+      const bf = await env.DB.prepare("SELECT v FROM settings WHERE k='users_backfill'").first();
+      if (!bf) {
+        await env.DB.batch([
+          env.DB.prepare("INSERT OR IGNORE INTO users(tg_id,created,logged) SELECT tg_id, first_seen, 1 FROM visitors WHERE tg_id IS NOT NULL AND tg_id<>''"),
+          env.DB.prepare("INSERT OR IGNORE INTO users(tg_id,created,logged) SELECT tg_id, created, 1 FROM sessions WHERE tg_id IS NOT NULL"),
+          env.DB.prepare("INSERT OR IGNORE INTO settings(k,v) VALUES('users_backfill','1')"),
+        ]);
       }
     })().catch((e) => { ready = null; throw e; });
   }
@@ -195,8 +217,20 @@ async function verifyLogin(env, db, token, from, chatId) {
     "UPDATE login_tokens SET verified=1,tg_id=?,name=?,username=? WHERE token=? AND verified=0 AND created>?"
   ).bind(tgId, name, username, token, Date.now() - TOKEN_MS).run();
   const changed = res && res.meta ? res.meta.changes : 1;
+  if (changed) await onFirstLogin(env, db, tgId);
   await reply(changed ? "✅ وارد شدی! برگرد به مرورگر." : "⌛ این لینک ورود منقضی شده. دوباره از سایت امتحان کن.");
 }
+
+const PENDING_MS = 86400000; // انتخاب پلن/کد تا ۲۴ ساعت معتبره
+const fa = (n) => Number(n || 0).toLocaleString("fa-IR");
+const isAdmin = (env, id) => !!env.ADMIN_TG_ID && String(id) === String(env.ADMIN_TG_ID);
+const MAIN_KB = {
+  inline_keyboard: [
+    [{ text: "💳 خرید اشتراک", callback_data: "menu:plans" }],
+    [{ text: "🎁 دعوت دوستان", callback_data: "menu:invite" }],
+  ],
+};
+const WELCOME = "سلام 👋\n\n🔐 برای ورود به پنل، توی سایت روی «ورود با تلگرام» بزن.\n\n💳 /plans — خرید اشتراک\n🎟 /code کد — ثبت کد تخفیف\n🎁 /invite — دعوت دوستان (روز رایگان)\n🧾 بعد از پرداخت، عکس رسید رو همین‌جا بفرست.";
 
 async function tgWebhook(request, env) {
   if (!env.TG_WEBHOOK_SECRET || !safeEq(request.headers.get("X-Telegram-Bot-Api-Secret-Token"), env.TG_WEBHOOK_SECRET))
@@ -207,23 +241,239 @@ async function tgWebhook(request, env) {
 
   const cq = upd && upd.callback_query;
   if (cq && cq.from) {
-    const m = String(cq.data || "").match(/^chk:([a-f0-9]{24})$/);
-    await tg(env, "answerCallbackQuery", { callback_query_id: cq.id }).catch(() => {});
-    if (m) await verifyLogin(env, db, m[1], cq.from, cq.from.id);
+    await touchUser(db, cq.from.id).catch(() => {});
+    await handleCallback(env, db, cq).catch((e) => console.error("callback", e));
     return new Response("ok");
   }
 
   const msg = upd && upd.message;
   if (!msg || !msg.from || !msg.chat) return new Response("ok");
-  const text = String(msg.text || "");
-  const m = text.match(/^\/start\s+([a-f0-9]{24})$/);
-  if (!m) {
-    if (text.startsWith("/start"))
-      await tg(env, "sendMessage", { chat_id: msg.chat.id, text: "برای ورود، توی سایت روی «ورود با تلگرام» بزن." }).catch(() => {});
-    return new Response("ok");
-  }
-  await verifyLogin(env, db, m[1], msg.from, msg.chat.id);
+  if (msg.chat.type !== "private") return new Response("ok");
+  await touchUser(db, msg.from.id).catch(() => {});
+  try {
+    if (msg.photo) await handleReceipt(env, db, msg);
+    else await handleText(env, db, msg, String(msg.text || "").trim());
+  } catch (e) { console.error("message", e); }
   return new Response("ok");
+}
+
+async function touchUser(db, id) {
+  await db.prepare("INSERT OR IGNORE INTO users(tg_id,created,logged) VALUES(?,?,0)").bind(String(id), Date.now()).run();
+}
+
+async function handleText(env, db, msg, text) {
+  const chatId = msg.chat.id, from = msg.from, tgId = String(from.id);
+  const reply = (t, extra = {}) => tg(env, "sendMessage", { chat_id: chatId, text: t, ...extra }).catch(() => {});
+  let m = text.match(/^\/start\s+([a-f0-9]{24})$/);
+  if (m) return verifyLogin(env, db, m[1], from, chatId);
+  m = text.match(/^\/start\s+adm_([a-f0-9]{24})$/);
+  if (m) return verifyAdminLogin(env, db, m[1], from, chatId);
+  m = text.match(/^\/start\s+ref_(\d{3,20})$/);
+  if (m) {
+    await recordReferral(db, tgId, m[1]).catch(() => {});
+    return reply(WELCOME, { reply_markup: MAIN_KB });
+  }
+  if (/^\/start(\s|$)/.test(text)) return reply(WELCOME, { reply_markup: MAIN_KB });
+  if (/^\/plans(\s|$)/.test(text)) return sendPlans(env, db, chatId);
+  if (/^\/invite(\s|$)/.test(text)) return sendInvite(env, db, chatId, tgId);
+  m = text.match(/^\/code(?:\s+(\S+))?$/i);
+  if (m) return applyCode(env, db, chatId, tgId, m[1] || "");
+  return reply("برای شروع /start رو بفرست. 👇", { reply_markup: MAIN_KB });
+}
+
+async function handleCallback(env, db, cq) {
+  const answer = (text = "") => tg(env, "answerCallbackQuery", { callback_query_id: cq.id, text }).catch(() => {});
+  const data = String(cq.data || "");
+  const chatId = cq.message && cq.message.chat ? cq.message.chat.id : cq.from.id;
+  const chk = data.match(/^chk:([a-f0-9]{24})$/);
+  if (chk) {
+    await answer();
+    return verifyLogin(env, db, chk[1], cq.from, cq.from.id);
+  }
+  if (data === "menu:plans") { await answer(); return sendPlans(env, db, chatId); }
+  if (data === "menu:invite") { await answer(); return sendInvite(env, db, chatId, String(cq.from.id)); }
+  const buy = data.match(/^buy:([a-z0-9_]{1,16})$/);
+  if (buy) { await answer(); return choosePlan(env, db, chatId, String(cq.from.id), buy[1]); }
+  const dec = data.match(/^(rc|rj):(\d{1,12})(?::([a-z0-9_]{1,16}))?$/);
+  if (dec) return adminDecide(env, db, cq, dec[1], Number(dec[2]), dec[3] || "", answer);
+  await answer();
+}
+
+async function verifyAdminLogin(env, db, token, from, chatId) {
+  const reply = (t) => tg(env, "sendMessage", { chat_id: chatId, text: t }).catch(() => {});
+  if (!isAdmin(env, from.id)) return reply("⛔ این لینک فقط برای ادمین پنله.");
+  const res = await db.prepare("UPDATE admin_tokens SET verified=1 WHERE token=? AND verified=0 AND created>?")
+    .bind(token, Date.now() - TOKEN_MS).run();
+  return reply(res.meta && res.meta.changes ? "✅ ورود ادمین تأیید شد. به مرورگر برگرد." : "⌛ این لینک منقضی شده. دوباره از پنل امتحان کن.");
+}
+
+// اولین ورود به سایت: کاربر رو ثبت می‌کنه و اگه با لینک دعوت اومده، به دعوت‌کننده جایزه می‌ده
+async function onFirstLogin(env, db, tgId) {
+  await db.prepare("INSERT OR IGNORE INTO users(tg_id,created,logged) VALUES(?,?,0)").bind(tgId, Date.now()).run();
+  const up = await db.prepare("UPDATE users SET logged=1 WHERE tg_id=? AND logged=0").bind(tgId).run();
+  if (!(up.meta && up.meta.changes)) return;
+  const ref = await db.prepare("SELECT referrer FROM refs WHERE invitee=? AND rewarded=0").bind(tgId).first();
+  if (!ref) return;
+  await db.prepare("UPDATE refs SET rewarded=1 WHERE invitee=?").bind(tgId).run();
+  const st = await getSettings(db);
+  const known = await db.prepare("SELECT 1 x FROM users WHERE tg_id=?").bind(ref.referrer).first();
+  if (!known || st.ref_days <= 0) return;
+  const until = await grantSub(db, ref.referrer, st.ref_days);
+  const when = new Date(until).toLocaleDateString("fa-IR", { timeZone: "Asia/Tehran" });
+  await tg(env, "sendMessage", {
+    chat_id: ref.referrer,
+    text: `🎁 یکی از دوستانت با لینکت وارد پنل شد! ${fa(st.ref_days)} روز اشتراک رایگان گرفتی.\nاعتبار اشتراکت تا ${when}`,
+  }).catch(() => {});
+}
+
+async function recordReferral(db, invitee, referrer) {
+  if (invitee === String(referrer)) return;
+  const u = await db.prepare("SELECT logged FROM users WHERE tg_id=?").bind(invitee).first();
+  if (u && u.logged) return; // قبلاً وارد پنل شده، دعوت حساب نمی‌شه
+  await db.prepare("INSERT OR IGNORE INTO refs(invitee,referrer,ts,rewarded) VALUES(?,?,?,0)")
+    .bind(invitee, String(referrer), Date.now()).run();
+}
+
+async function sendInvite(env, db, chatId, tgId) {
+  const st = await getSettings(db);
+  const bot = await botUsername(env);
+  const cnt = (await db.prepare("SELECT COUNT(*) n FROM refs WHERE referrer=? AND rewarded=1").bind(String(tgId)).first()).n;
+  const head = st.ref_days > 0
+    ? `🎁 به ازای هر دوستی که با این لینک وارد پنل بشه، ${fa(st.ref_days)} روز اشتراک رایگان می‌گیری.`
+    : "🎁 دعوت دوستان فعلاً فعال نیست.";
+  return tg(env, "sendMessage", {
+    chat_id: chatId,
+    text: `${head}\n\n🔗 لینک تو:\nhttps://t.me/${bot}?start=ref_${tgId}\n\n👥 تا الان ${fa(cnt)} نفر دعوت کردی.`,
+  }).catch(() => {});
+}
+
+async function sendPlans(env, db, chatId) {
+  const st = await getSettings(db);
+  const list = st.plans.map((p) => `• ${p.name} — ${fa(p.days)} روز: ${fa(p.price)} تومان`).join("\n");
+  const kb = { inline_keyboard: st.plans.map((p) => [{ text: `${p.name} • ${fa(p.price)} تومان`, callback_data: "buy:" + p.key }]) };
+  return tg(env, "sendMessage", {
+    chat_id: chatId,
+    text: `💳 پلن‌های اشتراک:\n\n${list}\n\n${st.pay_text}\n\nیکی از پلن‌ها رو انتخاب کن و بعد عکس رسید رو بفرست.`,
+    reply_markup: kb,
+  }).catch(() => {});
+}
+
+// کد تخفیف فعال (یا null)
+async function activeCode(db, code) {
+  if (!code) return null;
+  const r = await db.prepare("SELECT code,percent,max_uses,used,expires,active FROM discount_codes WHERE code=?").bind(code).first();
+  if (!r || !r.active || (r.expires && r.expires < Date.now()) || (r.max_uses > 0 && r.used >= r.max_uses)) return null;
+  return r;
+}
+const priceAfter = (plan, row) => (row ? Math.round(plan.price * (100 - row.percent) / 100) : plan.price);
+async function pendingCode(db, tgId) {
+  const p = await db.prepare("SELECT code FROM pending_buy WHERE tg_id=? AND ts>?").bind(tgId, Date.now() - PENDING_MS).first();
+  return p ? activeCode(db, p.code) : null;
+}
+
+async function choosePlan(env, db, chatId, tgId, key) {
+  const reply = (t) => tg(env, "sendMessage", { chat_id: chatId, text: t }).catch(() => {});
+  const st = await getSettings(db);
+  const plan = st.plans.find((p) => p.key === key);
+  if (!plan) return reply("این پلن دیگه وجود نداره. دوباره /plans رو بفرست.");
+  await db.prepare("INSERT INTO pending_buy(tg_id,plan,code,ts) VALUES(?,?,NULL,?) ON CONFLICT(tg_id) DO UPDATE SET plan=excluded.plan, ts=excluded.ts")
+    .bind(tgId, key, Date.now()).run();
+  const row = await pendingCode(db, tgId);
+  const price = priceAfter(plan, row);
+  return reply(`✅ پلن «${plan.name}» (${fa(plan.days)} روز) انتخاب شد.\n💰 مبلغ: ${fa(price)} تومان${row ? ` (با کد ${row.code})` : ""}\n\n${st.pay_text}\n\nبعد از پرداخت، عکس رسید رو همین‌جا بفرست.`);
+}
+
+async function applyCode(env, db, chatId, tgId, raw) {
+  const reply = (t) => tg(env, "sendMessage", { chat_id: chatId, text: t }).catch(() => {});
+  const code = String(raw).toUpperCase().replace(/[^A-Z0-9_-]/g, "").slice(0, 32);
+  if (!code) return reply("کد تخفیف رو بعد از /code بنویس. مثلاً: /code ABC123");
+  const row = await activeCode(db, code);
+  if (!row) return reply("❌ این کد معتبر نیست یا منقضی شده.");
+  await db.prepare("INSERT INTO pending_buy(tg_id,plan,code,ts) VALUES(?,NULL,?,?) ON CONFLICT(tg_id) DO UPDATE SET code=excluded.code, ts=excluded.ts")
+    .bind(tgId, code, Date.now()).run();
+  return reply(`🎟 کد «${code}» ثبت شد: ${fa(row.percent)}٪ تخفیف.\nحالا پلن رو از /plans انتخاب کن و رسید رو بفرست.`);
+}
+
+// کاربر عکس رسید می‌فرسته → برای ادمین فوروارد با دکمه‌ی تأیید هر پلن
+async function handleReceipt(env, db, msg) {
+  const chatId = msg.chat.id, from = msg.from, tgId = String(from.id);
+  const reply = (t) => tg(env, "sendMessage", { chat_id: chatId, text: t }).catch(() => {});
+  if (!env.ADMIN_TG_ID) return reply("پشتیبانی فعلاً در دسترس نیست. کمی بعد دوباره امتحان کن.");
+  if (await isBanned(db, tgId)) return reply("⛔ دسترسی تو به پنل مسدود شده.");
+  const open = await db.prepare("SELECT COUNT(*) n FROM receipts WHERE tg_id=? AND status='pending'").bind(tgId).first();
+  if (open.n >= 3) return reply("⏳ سه رسید قبلی‌ت هنوز بررسی نشدن. لطفاً صبر کن.");
+
+  const st = await getSettings(db);
+  const pend = await db.prepare("SELECT plan,code FROM pending_buy WHERE tg_id=? AND ts>?").bind(tgId, Date.now() - PENDING_MS).first();
+  const plan = pend && pend.plan ? st.plans.find((p) => p.key === pend.plan) || null : null;
+  const codeRow = await pendingCode(db, tgId);
+  const amount = plan ? priceAfter(plan, codeRow) : null;
+  const photo = msg.photo[msg.photo.length - 1];
+
+  const ins = await db.prepare("INSERT INTO receipts(tg_id,ts,file_id,plan,amount,code,status) VALUES(?,?,?,?,?,?,'pending')")
+    .bind(tgId, Date.now(), photo.file_id, plan ? plan.key : null, amount, codeRow ? codeRow.code : null).run();
+  const id = ins.meta.last_row_id;
+  await db.prepare("DELETE FROM pending_buy WHERE tg_id=?").bind(tgId).run();
+
+  const name = [from.first_name, from.last_name].filter(Boolean).join(" ");
+  const caption = `🧾 رسید #${id}\n👤 ${name || "-"}${from.username ? " (@" + from.username + ")" : ""}\n🆔 ${tgId}\n📦 پلن: ${plan ? `${plan.name} (${fa(plan.days)} روز)` : "انتخاب نشده"}\n💰 مبلغ: ${amount !== null ? fa(amount) + " تومان" : "—"}${codeRow ? "\n🎟 کد: " + codeRow.code : ""}\n\nیکی از پلن‌ها رو برای تأیید بزن:`;
+  const kb = {
+    inline_keyboard: [
+      ...st.plans.map((p) => [{ text: `✅ تأیید ${p.name} (${fa(p.days)} روز)`, callback_data: `rc:${id}:${p.key}` }]),
+      [{ text: "❌ رد", callback_data: `rj:${id}` }],
+    ],
+  };
+  const r = await tg(env, "sendPhoto", { chat_id: env.ADMIN_TG_ID, photo: photo.file_id, caption, reply_markup: kb }).catch(() => ({ ok: false }));
+  if (!r.ok) {
+    await db.prepare("DELETE FROM receipts WHERE id=?").bind(id).run();
+    return reply("⚠️ رسیدت ارسال نشد. چند دقیقه دیگه دوباره بفرست.");
+  }
+  return reply(`✅ رسیدت ثبت شد (#${id}).\nبعد از بررسی، اشتراکت فعال می‌شه و خبرش رو می‌گیری.`);
+}
+
+// ادمین روی دکمه‌ی زیر رسید می‌زنه
+async function adminDecide(env, db, cq, action, id, planKey, answer) {
+  if (!isAdmin(env, cq.from.id)) return answer("⛔ فقط ادمین می‌تونه این رو بزنه.");
+  const rec = await db.prepare("SELECT * FROM receipts WHERE id=?").bind(id).first();
+  if (!rec) return answer("رسید پیدا نشد.");
+  if (rec.status !== "pending") return answer(`این رسید قبلاً بررسی شده (${rec.status}).`);
+  const now = Date.now(), by = String(cq.from.id);
+
+  if (action === "rj") {
+    const res = await db.prepare("UPDATE receipts SET status='rejected', decided=?, decided_by=? WHERE id=? AND status='pending'").bind(now, by, id).run();
+    if (!res.meta.changes) return answer("قبلاً بررسی شده.");
+    await tg(env, "sendMessage", { chat_id: rec.tg_id, text: "❌ رسیدت تأیید نشد. اگه فکر می‌کنی اشتباهه، به @IMRC_support پیام بده." }).catch(() => {});
+    await stampReceipt(env, cq, "❌ رد شد");
+    return answer("رد شد.");
+  }
+
+  const st = await getSettings(db);
+  const plan = st.plans.find((p) => p.key === planKey);
+  if (!plan) return answer("پلن نامعتبره.");
+  const res = await db.prepare("UPDATE receipts SET status='approved', plan=?, decided=?, decided_by=? WHERE id=? AND status='pending'")
+    .bind(plan.key, now, by, id).run();
+  if (!res.meta.changes) return answer("قبلاً بررسی شده.");
+  if (rec.code) await db.prepare("UPDATE discount_codes SET used=used+1 WHERE code=? AND (max_uses=0 OR used<max_uses)").bind(rec.code).run();
+  const until = await grantSub(db, rec.tg_id, plan.days);
+  const when = new Date(until).toLocaleDateString("fa-IR", { timeZone: "Asia/Tehran" });
+  await tg(env, "sendMessage", {
+    chat_id: rec.tg_id,
+    text: `⭐ پرداختت تأیید شد!\nپلن ${plan.name}: ${fa(plan.days)} روز اشتراک.\nاعتبار تا ${when}\n\nحالا برگرد به پنل و کانفیگ بساز.`,
+  }).catch(() => {});
+  await stampReceipt(env, cq, `✅ تأیید شد: ${plan.name} (${fa(plan.days)} روز)`);
+  return answer("اشتراک فعال شد ✅");
+}
+
+// حذف دکمه‌ها از پیام ادمین و ثبت نتیجه روی همون پیام
+async function stampReceipt(env, cq, note) {
+  const m = cq.message;
+  if (!m) return;
+  await tg(env, "editMessageCaption", {
+    chat_id: m.chat.id,
+    message_id: m.message_id,
+    caption: `${m.caption || ""}\n\n${note}`.slice(0, 1000),
+    reply_markup: { inline_keyboard: [] },
+  }).catch(() => {});
 }
 
 /* ---------------- settings / quota ---------------- */
@@ -231,17 +481,48 @@ const DEFAULTS = {
   free_limit: "1",
   sub_limit: "20",
   free_countries: "tr,de,ae",
-  buy_text: "سقف ساخت کانفیگ رایگان امروز تموم شد.\nبرای ساخت بیشتر، اشتراک تهیه کن:\n\n💳 شماره کارت: 6219 8614 9829 6879\n👤 به نام: امیر رزاقی ساعی (بانک سامان)\n\nبعد از پرداخت، رسید رو به @IMRC_support بفرست تا اشتراکت فعال بشه.",
+  buy_text: "سقف ساخت کانفیگ رایگان امروز تموم شد.\nبرای ساخت بیشتر، اشتراک تهیه کن:\n\n💳 از ربات تلگرام پلن رو انتخاب کن (/plans) و بعد از پرداخت، عکس رسید رو همان‌جا بفرست.",
+  pay_text: "💳 شماره کارت: 6219 8614 9829 6879\n👤 به نام: امیر رزاقی ساعی (بانک سامان)",
+  plans: "w|هفتگی|7|50000\nm|ماهانه|30|150000\nq|سه‌ماهه|90|400000",
+  ref_days: "2",
 };
+const PLAN_KEY = /^[a-z0-9_]{1,16}$/;
+// هر خط: کلید|نام|روز|قیمت(تومان)
+function parsePlans(text) {
+  const out = [];
+  for (const line of String(text || "").split(/\n/)) {
+    const t = line.trim();
+    if (!t) continue;
+    const parts = t.split("|").map((s) => s.trim());
+    if (parts.length !== 4) throw new Error("هر پلن باید به شکل کلید|نام|روز|قیمت باشه");
+    const [key, name, days, price] = parts;
+    const d = parseInt(days), p = parseInt(price);
+    if (!PLAN_KEY.test(key)) throw new Error(`کلید پلن «${key}» نامعتبره (فقط حروف انگلیسی کوچک، عدد و _)`);
+    if (!name || name.length > 30) throw new Error(`نام پلن «${key}» نامعتبره`);
+    if (!(d >= 1 && d <= 3650)) throw new Error(`تعداد روز پلن «${key}» باید بین ۱ تا ۳۶۵۰ باشه`);
+    if (!(p >= 0 && p <= 100000000)) throw new Error(`قیمت پلن «${key}» نامعتبره`);
+    if (out.some((x) => x.key === key)) throw new Error(`کلید تکراری: ${key}`);
+    out.push({ key, name: name.replace(/[<>]/g, ""), days: d, price: p });
+  }
+  if (!out.length || out.length > 6) throw new Error("بین ۱ تا ۶ پلن لازمه");
+  return out;
+}
+const plansToText = (plans) => plans.map((p) => `${p.key}|${p.name}|${p.days}|${p.price}`).join("\n");
 async function getSettings(db) {
   const rows = (await db.prepare("SELECT k,v FROM settings").all()).results || [];
   const o = { ...DEFAULTS };
   for (const r of rows) if (r.k in DEFAULTS) o[r.k] = r.v;
+  let plans;
+  try { plans = parsePlans(o.plans); } catch (e) { plans = parsePlans(DEFAULTS.plans); }
   return {
     free_limit: Math.max(0, parseInt(o.free_limit) || 0),
     sub_limit: Math.max(0, parseInt(o.sub_limit) || 0),
     free_countries: String(o.free_countries).toLowerCase().replace(/[^a-z,]/g, ""),
     buy_text: String(o.buy_text),
+    pay_text: String(o.pay_text),
+    ref_days: Math.min(365, Math.max(0, parseInt(o.ref_days) || 0)),
+    plans,
+    plans_text: plansToText(plans),
   };
 }
 const dayStartOf = (now) => Math.floor((now + TEHRAN) / 86400000) * 86400000 - TEHRAN;
@@ -442,13 +723,131 @@ async function track(request, env) {
 }
 
 /* ---------------- /api/admin/* ---------------- */
-function adminOk(request, env) {
-  if (!env.ADMIN_PASSWORD) return json({ error: "ADMIN_PASSWORD تنظیم نشده" }, 500);
-  const auth = (request.headers.get("Authorization") || "").replace(/^Bearer /, "");
-  if (!safeEq(auth, env.ADMIN_PASSWORD)) return json({ error: "رمز اشتباه است" }, 401);
-  return null;
+const ADMIN_SESSION_MS = 7 * 86400000;
+const LOCK_IP = { max: 5, win: 15 * 60000, lock: 15 * 60000 };          // ۵ رمز اشتباه از یک IP → ۱۵ دقیقه قفل
+const LOCK_GLOBAL = { max: 30, win: 60 * 60000, lock: 30 * 60000 };    // ۳۰ اشتباه کل در ساعت → ۳۰ دقیقه قفل رمز برای همه
+
+async function lockedUntil(db, keys) {
+  const now = Date.now();
+  let until = 0;
+  for (const k of keys) {
+    const r = await db.prepare("SELECT locked_until FROM auth_fails WHERE k=?").bind(k).first();
+    if (r && r.locked_until > now) until = Math.max(until, r.locked_until);
+  }
+  return until;
+}
+async function bumpFail(db, k, o) {
+  const now = Date.now();
+  const r = await db.prepare("SELECT fails,first FROM auth_fails WHERE k=?").bind(k).first();
+  let fails = 1, first = now;
+  if (r && now - r.first < o.win) { fails = r.fails + 1; first = r.first; }
+  let locked = 0;
+  if (fails >= o.max) { locked = now + o.lock; fails = 0; first = now; }
+  await db.prepare("INSERT INTO auth_fails(k,fails,first,locked_until) VALUES(?,?,?,?) ON CONFLICT(k) DO UPDATE SET fails=excluded.fails, first=excluded.first, locked_until=excluded.locked_until")
+    .bind(k, fails, first, locked).run();
 }
 
+// ورود ادمین: کوکی نشست (از تلگرام) یا Bearer با رمز. رمز اشتباه قفل می‌شه.
+async function adminAuth(request, env) {
+  if (!env.ADMIN_PASSWORD && !env.ADMIN_TG_ID) return json({ error: "ADMIN_PASSWORD یا ADMIN_TG_ID تنظیم نشده" }, 500);
+  const db = await getDB(env);
+  const sid = cookie(request, "imrc_admin");
+  if (/^[a-f0-9]{32}$/.test(sid)) {
+    const row = await db.prepare("SELECT created FROM admin_sessions WHERE sid=?").bind(sid).first();
+    if (row && Date.now() - row.created < ADMIN_SESSION_MS) return null;
+  }
+  const auth = (request.headers.get("Authorization") || "").replace(/^Bearer /, "");
+  if (!env.ADMIN_PASSWORD || !auth) return json({ error: "login" }, 401);
+  const ipKey = "ip:" + (await sha(request.headers.get("CF-Connecting-IP") || "none"));
+  const until = await lockedUntil(db, [ipKey, "global"]);
+  if (until) {
+    const mins = Math.max(1, Math.ceil((until - Date.now()) / 60000));
+    return json({ error: `به‌خاطر تلاش‌های زیاد قفل شده. ${fa(mins)} دقیقه دیگه امتحان کن.`, locked: true }, 429);
+  }
+  if (safeEq(auth, env.ADMIN_PASSWORD)) {
+    await db.prepare("DELETE FROM auth_fails WHERE k=?").bind(ipKey).run();
+    return null;
+  }
+  await bumpFail(db, ipKey, LOCK_IP);
+  await bumpFail(db, "global", LOCK_GLOBAL);
+  return json({ error: "رمز اشتباه است" }, 401);
+}
+
+// ورود ادمین با تلگرام
+async function adminTgStart(env) {
+  if (!env.ADMIN_TG_ID || !env.BOT_TOKEN) return json({ error: "ADMIN_TG_ID یا BOT_TOKEN تنظیم نشده" }, 500);
+  const db = await getDB(env);
+  const now = Date.now(), token = randHex(12);
+  await db.batch([
+    db.prepare("DELETE FROM admin_tokens WHERE created<?").bind(now - 3600000),
+    db.prepare("INSERT INTO admin_tokens(token,created,verified) VALUES(?,?,0)").bind(token, now),
+  ]);
+  const bot = await botUsername(env);
+  return json({ token, url: `https://t.me/${bot}?start=adm_${token}` });
+}
+
+async function adminTgCheck(env, url) {
+  const token = url.searchParams.get("token") || "";
+  if (!/^[a-f0-9]{24}$/.test(token)) return json({ status: "expired" });
+  const db = await getDB(env);
+  const now = Date.now();
+  const row = await db.prepare("SELECT created,verified FROM admin_tokens WHERE token=?").bind(token).first();
+  if (!row || now - row.created > TOKEN_MS) return json({ status: "expired" });
+  if (!row.verified) return json({ status: "pending" });
+  const sid = randHex(16);
+  await db.batch([
+    db.prepare("INSERT INTO admin_sessions(sid,created) VALUES(?,?)").bind(sid, now),
+    db.prepare("DELETE FROM admin_sessions WHERE created<?").bind(now - ADMIN_SESSION_MS),
+    db.prepare("DELETE FROM admin_tokens WHERE token=?").bind(token),
+  ]);
+  return json({ status: "ok" }, 200, {
+    "Set-Cookie": `imrc_admin=${sid}; Path=/; Max-Age=${ADMIN_SESSION_MS / 1000}; HttpOnly; Secure; SameSite=Strict`,
+  });
+}
+
+async function adminLogout(request, env) {
+  const sid = cookie(request, "imrc_admin");
+  if (/^[a-f0-9]{32}$/.test(sid)) {
+    const db = await getDB(env);
+    await db.prepare("DELETE FROM admin_sessions WHERE sid=?").bind(sid).run();
+  }
+  return json({ ok: true }, 200, { "Set-Cookie": "imrc_admin=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict" });
+}
+
+async function adminCodes(request, env) {
+  const db = await getDB(env);
+  if (request.method === "GET") {
+    const r = await db.prepare("SELECT code,percent,max_uses,used,expires,active,created FROM discount_codes ORDER BY created DESC LIMIT 200").all();
+    return json({ codes: r.results || [] });
+  }
+  let b;
+  try { b = await request.json(); } catch { return json({ error: "bad" }, 400); }
+  const code = String(b.code || "").toUpperCase().replace(/[^A-Z0-9_-]/g, "");
+  if (!/^[A-Z0-9_-]{3,32}$/.test(code)) return json({ error: "کد باید ۳ تا ۳۲ کاراکتر انگلیسی یا عدد باشه" }, 400);
+  if (b.disable !== undefined) {
+    await db.prepare("UPDATE discount_codes SET active=? WHERE code=?").bind(b.disable ? 0 : 1, code).run();
+    return json({ ok: true });
+  }
+  const pct = parseInt(b.percent), max = parseInt(b.max_uses) || 0, days = parseInt(b.days) || 0;
+  if (!(pct >= 1 && pct <= 100)) return json({ error: "درصد تخفیف باید بین ۱ تا ۱۰۰ باشه" }, 400);
+  if (!(max >= 0 && max <= 100000) || !(days >= 0 && days <= 3650)) return json({ error: "مقادیر نامعتبره" }, 400);
+  const exp = days ? Date.now() + days * 86400000 : null;
+  try {
+    await db.prepare("INSERT INTO discount_codes(code,percent,max_uses,used,expires,active,created) VALUES(?,?,?,0,?,1,?)")
+      .bind(code, pct, max, exp, Date.now()).run();
+  } catch { return json({ error: "این کد قبلاً ساخته شده" }, 409); }
+  return json({ ok: true, code });
+}
+
+// افزودن روز اشتراک (اگر از قبل اشتراک داره، روی تاریخ فعلی اضافه می‌شه)
+async function grantSub(db, tgId, days) {
+  const now = Date.now();
+  const cur = await db.prepare("SELECT until FROM subs WHERE tg_id=?").bind(String(tgId)).first();
+  const until = Math.max(now, (cur && cur.until) || 0) + days * 86400000;
+  await db.prepare("INSERT INTO subs(tg_id,until) VALUES(?,?) ON CONFLICT(tg_id) DO UPDATE SET until=excluded.until")
+    .bind(String(tgId), until).run();
+  return until;
+}
 async function adminStats(env) {
   const db = await getDB(env);
   const now = Date.now();
@@ -481,18 +880,14 @@ async function adminSub(request, env) {
   const days = parseInt(b.days);
   if (!/^[0-9]{3,20}$/.test(tgId) || !(days >= 0 && days <= 3650)) return json({ error: "ورودی نامعتبر" }, 400);
   const db = await getDB(env);
-  const now = Date.now();
-  let until = null;
   if (days === 0) {
     await db.prepare("DELETE FROM subs WHERE tg_id=?").bind(tgId).run();
-  } else {
-    const cur = await db.prepare("SELECT until FROM subs WHERE tg_id=?").bind(tgId).first();
-    until = Math.max(now, (cur && cur.until) || 0) + days * 86400000;
-    await db.prepare("INSERT INTO subs(tg_id,until) VALUES(?,?) ON CONFLICT(tg_id) DO UPDATE SET until=excluded.until").bind(tgId, until).run();
-    if (env.BOT_TOKEN) {
-      const when = new Date(until).toLocaleDateString("fa-IR", { timeZone: "Asia/Tehran" });
-      await tg(env, "sendMessage", { chat_id: tgId, text: `⭐ اشتراکت فعال شد.\nتا تاریخ ${when} می‌تونی روزانه تا ${(await getSettings(db)).sub_limit} کانفیگ بسازی.` }).catch(() => {});
-    }
+    return json({ ok: true, until: null });
+  }
+  const until = await grantSub(db, tgId, days);
+  if (env.BOT_TOKEN) {
+    const when = new Date(until).toLocaleDateString("fa-IR", { timeZone: "Asia/Tehran" });
+    await tg(env, "sendMessage", { chat_id: tgId, text: `⭐ اشتراکت فعال شد.\nتا تاریخ ${when} می‌تونی روزانه تا ${(await getSettings(db)).sub_limit} کانفیگ بسازی.` }).catch(() => {});
   }
   return json({ ok: true, until });
 }
@@ -543,17 +938,25 @@ async function adminBan(request, env) {
 async function adminSettings(request, env) {
   let b;
   try { b = await request.json(); } catch { return json({ error: "bad" }, 400); }
-  const fl = parseInt(b.free_limit), sl = parseInt(b.sub_limit);
+  const fl = parseInt(b.free_limit), sl = parseInt(b.sub_limit), rd = parseInt(b.ref_days);
   if (!(fl >= 0 && fl <= 1000) || !(sl >= 0 && sl <= 1000)) return json({ error: "سقف باید بین ۰ تا ۱۰۰۰ باشد" }, 400);
+  if (!(rd >= 0 && rd <= 365)) return json({ error: "روز جایزه‌ی دعوت باید بین ۰ تا ۳۶۵ باشه" }, 400);
   const fc = String(b.free_countries || "").toLowerCase().replace(/[^a-z,]/g, "").replace(/,+/g, ",").replace(/^,|,$/g, "");
   if (!/^[a-z]{2}(,[a-z]{2})*$/.test(fc)) return json({ error: "کشورهای رایگان باید کد دو حرفی و با ویرگول جدا باشد (مثل tr,de,ae)" }, 400);
   const text = String(b.buy_text || "").replace(/[\u0000-\u0008]/g, "").trim().slice(0, 400) || DEFAULTS.buy_text;
+  const payText = String(b.pay_text || "").replace(/[\u0000-\u0008]/g, "").trim().slice(0, 400) || DEFAULTS.pay_text;
+  let plans;
+  try { plans = parsePlans(String(b.plans || "")); } catch (e) { return json({ error: e.message }, 400); }
   const db = await getDB(env);
+  const up = (k, v) => db.prepare("INSERT INTO settings(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v").bind(k, v);
   await db.batch([
-    db.prepare("INSERT INTO settings(k,v) VALUES('free_limit',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v").bind(String(fl)),
-    db.prepare("INSERT INTO settings(k,v) VALUES('sub_limit',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v").bind(String(sl)),
-    db.prepare("INSERT INTO settings(k,v) VALUES('free_countries',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v").bind(fc),
-    db.prepare("INSERT INTO settings(k,v) VALUES('buy_text',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v").bind(text),
+    up("free_limit", String(fl)),
+    up("sub_limit", String(sl)),
+    up("free_countries", fc),
+    up("buy_text", text),
+    up("plans", plansToText(plans)),
+    up("pay_text", payText),
+    up("ref_days", String(rd)),
   ]);
   return json({ ok: true });
 }
@@ -584,31 +987,38 @@ export default {
       if (p === "/api/tg/webhook" && request.method === "POST") return await tgWebhook(request, env);
       if (p === "/api/track" && request.method === "POST") return await track(request, env);
       if (p === "/api/admin/stats" && request.method === "GET") {
-        const bad = adminOk(request, env); if (bad) return bad;
+        const bad = await adminAuth(request, env); if (bad) return bad;
         return await adminStats(env);
       }
       if (p === "/api/me" && request.method === "GET") return await me(request, env);
       if (p === "/api/member/check" && request.method === "GET") return await memberCheck(request, env);
       if (p === "/api/admin/userlimit" && request.method === "POST") {
-        const bad = adminOk(request, env); if (bad) return bad;
+        const bad = await adminAuth(request, env); if (bad) return bad;
         return await adminUserLimit(request, env);
       }
       if (p === "/api/admin/ban" && request.method === "POST") {
-        const bad = adminOk(request, env); if (bad) return bad;
+        const bad = await adminAuth(request, env); if (bad) return bad;
         return await adminBan(request, env);
       }
       if (p === "/api/config/create" && request.method === "POST") return await createConfig(request, env);
       if (p === "/api/admin/sub" && request.method === "POST") {
-        const bad = adminOk(request, env); if (bad) return bad;
+        const bad = await adminAuth(request, env); if (bad) return bad;
         return await adminSub(request, env);
       }
       if (p === "/api/admin/settings" && request.method === "POST") {
-        const bad = adminOk(request, env); if (bad) return bad;
+        const bad = await adminAuth(request, env); if (bad) return bad;
         return await adminSettings(request, env);
       }
       if (p === "/api/admin/webhook" && request.method === "POST") {
-        const bad = adminOk(request, env); if (bad) return bad;
+        const bad = await adminAuth(request, env); if (bad) return bad;
         return await adminWebhook(request, env);
+      }
+      if (p === "/api/admin/tg/start" && request.method === "POST") return await adminTgStart(env);
+      if (p === "/api/admin/tg/check" && request.method === "GET") return await adminTgCheck(env, url);
+      if (p === "/api/admin/logout" && request.method === "POST") return await adminLogout(request, env);
+      if (p === "/api/admin/codes" && (request.method === "GET" || request.method === "POST")) {
+        const bad = await adminAuth(request, env); if (bad) return bad;
+        return await adminCodes(request, env);
       }
       if (p.startsWith("/api/")) return new Response(null, { status: 405 });
 

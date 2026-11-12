@@ -140,7 +140,43 @@ button{background:var(--pink);border:0;color:#fff;cursor:pointer}
     <div id="codes" style="margin-top:12px"></div>
   </div>
 
-  <h2>کاربران (جدیدترین فعالیت اول)</h2>
+  <h2>📈 درآمد</h2>
+  <div class="grid" style="grid-template-columns:repeat(2,1fr)">
+    <div class="card stat"><b id="rToday">۰</b><span>درآمد امروز (تومان)</span></div>
+    <div class="card stat"><b id="rMonth">۰</b><span>درآمد این ماه (تومان)</span></div>
+    <div class="card stat"><b id="rAll">۰</b><span>کل درآمد (تومان)</span></div>
+    <div class="card stat"><b id="rPay">۰</b><span>کل پرداخت‌های تأییدشده</span></div>
+  </div>
+  <h2>درآمد ۳۰ روز اخیر (هزار تومان)</h2>
+  <div class="card"><div class="bars" id="rBars" style="gap:2px"></div></div>
+  <h2>گزارش ماهانه (شمسی)</h2>
+  <div class="card" id="rMonthly"></div>
+  <div class="btns" style="justify-content:flex-start">
+    <button onclick="dl('monthly')" style="background:#232a40">📥 گزارش ماهانه (اکسل)</button>
+    <button onclick="dl('receipts')" style="background:#232a40">📥 همه‌ی رسیدها (اکسل)</button>
+  </div>
+
+  <h2>کاربران</h2>
+  <div class="card frm" style="margin-bottom:10px">
+    <input id="uq" placeholder="جستجو: نام، @یوزرنیم، آیدی، شهر" oninput="searchUsers()" style="width:100%"/>
+    <select id="uf" onchange="uPage=0;loadUsers()" style="width:100%;font:inherit;border-radius:10px;border:1px solid var(--line);background:#0e1220;color:var(--tx);padding:10px 12px;margin-top:8px">
+      <option value="all">همه‌ی کاربران</option>
+      <option value="sub">اشتراک فعال</option>
+      <option value="expired">اشتراک منقضی‌شده</option>
+      <option value="never">هیچ‌وقت اشتراک نگرفته</option>
+      <option value="banned">مسدود</option>
+      <option value="new7">جدید (۷ روز اخیر)</option>
+      <option value="inactive30">غیرفعال (بیش از ۳۰ روز)</option>
+    </select>
+    <div class="btns" style="justify-content:space-between;align-items:center">
+      <span id="uinfo" style="font-size:12px;color:var(--mut)"></span>
+      <span>
+        <button onclick="pageU(-1)" style="background:#232a40">قبلی</button>
+        <button onclick="pageU(1)" style="background:#232a40">بعدی</button>
+        <button onclick="dlUsers()" style="background:#232a40">📥 خروجی اکسل</button>
+      </span>
+    </div>
+  </div>
   <div class="card" id="users"></div>
 
   <h2>فعالیت‌های اخیر</h2>
@@ -177,7 +213,9 @@ async function load(){
   if(r.status===401){if(pw)$("err").textContent="رمز اشتباه است";return false}
   const d=await r.json().catch(()=>({}));
   if(!r.ok){$("err").textContent=d.error||"خطای سرور";return false}
-  render(d);return true;
+  render(d);loadUsers();
+  if(!window._rl||Date.now()-window._rl>60000){window._rl=Date.now();loadReport()}
+  return true;
 }
 function render(d){
   const t=d.totals,now=d.now;
@@ -196,26 +234,14 @@ function render(d){
   const chip=(a,l)=>a.map(x=>`<span>${l} ${esc(x.k)} <b>${fa(x.c)}</b></span>`).join("");
   $("chips").innerHTML=(chip(d.regions,"🌍")+chip(d.modes,"🎮"))||'<span style="color:var(--mut)">هنوز داده‌ای نیست</span>';
 
-  window._users=d.visitors;
-  $("users").innerHTML=d.visitors.map((v,i)=>{
-    const on=now-v.last_seen<90000;
-    const who=v.tg_name||(v.tg_username?"@"+v.tg_username:"")||v.last_name||"ناشناس";
-    const handle=v.tg_username?"@"+v.tg_username+" • ":"";
-    return `<div class="row"><div><i class="dot ${on?"on":""}"></i><b>${esc(who)}</b>
-      ${v.sub_until&&v.sub_until>now?`<span class="badge">⭐ تا ${new Date(v.sub_until).toLocaleDateString("fa-IR")}</span>`:""}
-      <div class="sub">${esc(handle)}${esc(v.country||"?")}${v.city?" • "+esc(v.city):""} • ${esc(v.device)}${v.last_name?" • "+esc(v.last_name):""}</div>
-      ${v.ul_lim!=null&&(!v.ul_until||v.ul_until>now)?`<span class="badge" style="background:rgba(60,213,255,.15);color:var(--cy)">⚙️ ${v.ul_lim} در ${PER[v.ul_period]||""}${v.ul_unlock?" • همه‌امکانات":""}</span>`:""}
-      ${v.banned?`<span class="badge" style="background:rgba(255,84,112,.15);color:var(--red)">🚫 مسدود</span>`:""}
-      ${v.tg_id?`<div class="btns"><button class="ok" onclick="grant('${esc(v.tg_id)}')">⭐ اشتراک</button><button onclick="openLimit(${i})">⚙️ سقف</button>${v.banned?`<button onclick="ban('${esc(v.tg_id)}',false)">✅ رفع مسدودی</button>`:`<button onclick="ban('${esc(v.tg_id)}',true)">🚫 مسدود</button>`}${v.sub_until&&v.sub_until>now?`<button onclick="revoke('${esc(v.tg_id)}')">لغو</button>`:""}</div>`:""}</div>
-      <div style="text-align:left"><span class="num">${fa(v.configs)} کانفیگ</span>
-      <div class="sub" style="direction:rtl;text-align:left">${fa(v.actions)} فعالیت • ${on?"آنلاین":ago(v.last_seen,now)}</div></div></div>`}).join("")||'<span style="color:var(--mut)">هنوز کاربری نیست</span>';
+  // کاربران: با loadUsers() گرفته می‌شن (جستجو و فیلتر و صفحه‌بندی)
 
   $("events").innerHTML=d.events.map(e=>`<div class="ev"><b>${esc(e.tg_name||(e.tg_username?"@"+e.tg_username:"#"+e.vid.slice(0,6)))}</b> — ${evText(e)}<time>${clock(e.ts)}</time></div>`).join("")||'<span style="color:var(--mut)">هنوز فعالیتی نیست</span>';
   if(d.settings&&!window._setLoaded){window._setLoaded=true;$("setFree").value=d.settings.free_limit;$("setSub").value=d.settings.sub_limit;$("setText").value=d.settings.buy_text;$("setFree2").value=d.settings.free_countries;$("setPlans").value=d.settings.plans_text;$("setPay").value=d.settings.pay_text;$("setRef").value=d.settings.ref_days;$("setRemind").value=d.settings.remind_days;$("setNotify").checked=!!d.settings.admin_notify}
   $("upd").textContent="آخرین به‌روزرسانی: "+new Date().toLocaleTimeString("fa-IR");
 }
 async function start(){
-  $("login").classList.add("hide");$("app").classList.remove("hide");loadCodes();loadTickets();loadBroadcasts();
+  $("login").classList.add("hide");$("app").classList.remove("hide");loadCodes();loadTickets();loadBroadcasts();window._rl=Date.now();loadReport();
   clearInterval(timer);timer=setInterval(()=>{if(!document.hidden){load();loadTickets();loadBroadcasts();if(window._tid)openTicket(window._tid,true)}},15000);
 }
 async function doLogin(){
@@ -358,6 +384,53 @@ async function loadBroadcasts(){
 async function cancelBroadcast(id){
   if(!confirm("ارسال باقی‌مونده لغو بشه؟"))return;
   try{await post("/api/admin/broadcast",{id,cancel:true});loadBroadcasts()}catch(e){alert("❌ "+e.message)}
+}
+function drawUsers(list,now){
+  window._users=list;
+  $("users").innerHTML=list.map((v,i)=>{
+    const on=now-v.last_seen<90000;
+    const who=v.tg_name||(v.tg_username?"@"+v.tg_username:"")||v.last_name||"ناشناس";
+    const handle=v.tg_username?"@"+v.tg_username+" • ":"";
+    return `<div class="row"><div><i class="dot ${on?"on":""}"></i><b>${esc(who)}</b>
+      ${v.sub_until&&v.sub_until>now?`<span class="badge">⭐ تا ${new Date(v.sub_until).toLocaleDateString("fa-IR")}</span>`:""}
+      <div class="sub">${esc(handle)}${esc(v.country||"?")}${v.city?" • "+esc(v.city):""} • ${esc(v.device)}${v.last_name?" • "+esc(v.last_name):""}</div>
+      ${v.ul_lim!=null&&(!v.ul_until||v.ul_until>now)?`<span class="badge" style="background:rgba(60,213,255,.15);color:var(--cy)">⚙️ ${v.ul_lim} در ${PER[v.ul_period]||""}${v.ul_unlock?" • همه‌امکانات":""}</span>`:""}
+      ${v.banned?`<span class="badge" style="background:rgba(255,84,112,.15);color:var(--red)">🚫 مسدود</span>`:""}
+      ${v.tg_id?`<div class="btns"><button class="ok" onclick="grant('${esc(v.tg_id)}')">⭐ اشتراک</button><button onclick="openLimit(${i})">⚙️ سقف</button>${v.banned?`<button onclick="ban('${esc(v.tg_id)}',false)">✅ رفع مسدودی</button>`:`<button onclick="ban('${esc(v.tg_id)}',true)">🚫 مسدود</button>`}${v.sub_until&&v.sub_until>now?`<button onclick="revoke('${esc(v.tg_id)}')">لغو</button>`:""}</div>`:""}</div>
+      <div style="text-align:left"><span class="num">${fa(v.configs)} کانفیگ</span>
+      <div class="sub" style="direction:rtl;text-align:left">${fa(v.actions)} فعالیت • ${on?"آنلاین":ago(v.last_seen,now)}</div></div></div>`}).join("")||'<span style="color:var(--mut)">هنوز کاربری نیست</span>';
+}
+let uPage=0,uTimer;
+async function loadUsers(){
+  const q=encodeURIComponent($("uq").value.trim()),f=encodeURIComponent($("uf").value);
+  const r=await fetch(`/api/admin/users?q=${q}&filter=${f}&page=${uPage}`,{headers:authH()}).catch(()=>null);
+  if(!r||!r.ok)return;
+  const d=await r.json();
+  if(uPage>0&&uPage>=d.pages){uPage=d.pages-1;return loadUsers()}
+  $("uinfo").textContent=`${fa(d.total)} کاربر • صفحه ${fa(d.page+1)} از ${fa(d.pages)}`;
+  drawUsers(d.users,Date.now());
+}
+function pageU(delta){uPage=Math.max(0,uPage+delta);loadUsers()}
+function searchUsers(){clearTimeout(uTimer);uTimer=setTimeout(()=>{uPage=0;loadUsers()},350)}
+async function dl(type,extra){
+  try{
+    const r=await fetch(`/api/admin/export?type=${type}${extra?"&"+extra:""}`,{headers:authH()});
+    if(!r.ok)throw new Error("خطا در دریافت فایل");
+    const blob=await r.blob();const a=document.createElement("a");
+    a.href=URL.createObjectURL(blob);a.download=`imrc-${type}.csv`;document.body.appendChild(a);a.click();a.remove();
+  }catch(e){alert("❌ "+e.message)}
+}
+function dlUsers(){dl("users",`q=${encodeURIComponent($("uq").value.trim())}&filter=${encodeURIComponent($("uf").value)}`)}
+async function loadReport(){
+  const r=await fetch("/api/admin/report",{headers:authH()}).catch(()=>null);
+  if(!r||!r.ok)return;
+  const d=await r.json();
+  $("rToday").textContent=fa(d.today.amount);$("rMonth").textContent=fa(d.month.amount);
+  $("rAll").textContent=fa(d.total.amount);$("rPay").textContent=fa(d.total.n);
+  const max=Math.max(1,...d.daily.map(x=>x.amount));
+  $("rBars").innerHTML=d.daily.map((x,i)=>`<div><em>${x.amount?fa(Math.round(x.amount/1000)):""}</em><i style="height:${Math.round(x.amount/max*80)}px"></i>${i%5===0?esc(x.label):""}</div>`).join("");
+  $("rMonthly").innerHTML=`<div class="row" style="font-weight:700;color:var(--mut)"><span>ماه</span><span>درآمد (تومان)</span><span>پرداخت</span><span>کاربر جدید</span><span>کانفیگ</span></div>`
+    +d.monthly.map(m=>`<div class="row"><span>${esc(m.label)}</span><span class="num">${fa(m.amount)}</span><span>${fa(m.n)}</span><span>${fa(m.usr)}</span><span>${fa(m.cfg)}</span></div>`).join("");
 }
 async function setupBot(){
   try{

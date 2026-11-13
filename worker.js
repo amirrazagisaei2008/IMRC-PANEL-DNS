@@ -259,6 +259,7 @@ const MAIN_KB = {
   inline_keyboard: [
     [{ text: "💳 خرید اشتراک", callback_data: "menu:plans" }],
     [{ text: "🎁 دعوت دوستان", callback_data: "menu:invite" }],
+    [{ text: "👤 حساب من", callback_data: "menu:me" }],
     [{ text: "🎫 پشتیبانی", callback_data: "menu:support" }],
   ],
 };
@@ -271,11 +272,13 @@ async function tgWebhook(request, env) {
   let upd;
   try { upd = await request.json(); } catch { return new Response("ok"); }
   const db = await getDB(env);
+  // آدرس سایت برای دکمه‌های لینک (PUBLIC_URL اختیاری است؛ وگرنه همون آدرس درخواست تلگرام)
+  const origin = (env.PUBLIC_URL || new URL(request.url).origin).replace(/\/$/, "");
 
   const cq = upd && upd.callback_query;
   if (cq && cq.from) {
     await touchUser(env, db, cq.from).catch(() => {});
-    await handleCallback(env, db, cq).catch((e) => console.error("callback", e));
+    await handleCallback(env, db, cq, origin).catch((e) => console.error("callback", e));
     return new Response("ok");
   }
 
@@ -285,7 +288,7 @@ async function tgWebhook(request, env) {
   await touchUser(env, db, msg.from).catch(() => {});
   try {
     if (msg.photo) await handleReceipt(env, db, msg);
-    else await handleText(env, db, msg, String(msg.text || "").trim());
+    else await handleText(env, db, msg, String(msg.text || "").trim(), origin);
   } catch (e) { console.error("message", e); }
   return new Response("ok");
 }
@@ -306,7 +309,7 @@ async function notifyAdmin(env, db, text) {
   await tg(env, "sendMessage", { chat_id: env.ADMIN_TG_ID, text }).catch(() => {});
 }
 
-async function handleText(env, db, msg, text) {
+async function handleText(env, db, msg, text, origin) {
   const chatId = msg.chat.id, from = msg.from, tgId = String(from.id);
   const reply = (t, extra = {}) => tg(env, "sendMessage", { chat_id: chatId, text: t, ...extra }).catch(() => {});
   // ادمین روی اعلان یک تیکت Reply کنه → پاسخ به کاربر
@@ -320,7 +323,10 @@ async function handleText(env, db, msg, text) {
     await recordReferral(db, tgId, m[1]).catch(() => {});
     return reply(await welcomeText(db), { reply_markup: MAIN_KB });
   }
-  if (/^\/start(\s|$)/.test(text)) return reply(await welcomeText(db), { reply_markup: MAIN_KB });
+  if (/^\/start(\s|$)/.test(text)) {
+    await reply(await welcomeText(db), { reply_markup: MAIN_KB });
+    return isAdmin(env, from.id) ? reply(ADMIN_HINT) : undefined;
+  }
   if (/^\/plans(\s|$)/.test(text)) return sendPlans(env, db, chatId);
   if (/^\/invite(\s|$)/.test(text)) return sendInvite(env, db, chatId, tgId);
   m = text.match(/^\/code(?:\s+(\S+))?$/i);
@@ -332,12 +338,30 @@ async function handleText(env, db, msg, text) {
       ? "✅ این آی‌دی با ADMIN_TG_ID یکیه؛ تو ادمینی."
       : "ℹ️ اگه این حساب ادمینه، این عدد رو (فقط عدد، بدون @ و فاصله) توی ADMIN_TG_ID بذار و دوباره امتحان کن."));
   }
+  if (/^\/me(@\S+)?(\s|$)/i.test(text)) return sendMyStatus(env, db, chatId, tgId);
+  if (/^\/(panel|admin)(@\S+)?(\s|$)/i.test(text)) return isAdmin(env, from.id) ? adminPanelMenu(env, db, chatId, origin) : reply(NOT_ADMIN);
+  m = text.match(/^\/tickets(?:@\S+)?(?:\s+(open|closed|all))?\s*$/i);
+  if (m) {
+    if (!isAdmin(env, from.id)) return reply(NOT_ADMIN);
+    const code = { open: "o", closed: "c", all: "a" }[(m[1] || "open").toLowerCase()];
+    return ticketsList(env, db, chatId, code);
+  }
+  m = text.match(/^\/reply(?:@\S+)?\s+(\d{1,12})\s+([\s\S]+)$/i);
+  if (m) {
+    if (!isAdmin(env, from.id)) return reply(NOT_ADMIN);
+    const body = m[2].trim().slice(0, 3500);
+    if (!body) return reply("متن پاسخ خالیه. مثال: /reply 12 سلام");
+    const res = await ticketReply(env, db, Number(m[1]), body);
+    return reply(res.error ? "⚠️ " + res.error
+      : res.delivered ? `✅ پاسخ برای تیکت #${m[1]} فرستاده شد.`
+      : "⚠️ پاسخ ذخیره شد ولی به کاربر نرسید (احتمالاً ربات رو بلاک کرده).");
+  }
   if (!text || text.startsWith("/")) return reply("برای شروع /start رو بفرست. 👇", { reply_markup: MAIN_KB });
   if (isAdmin(env, from.id)) return reply("برای پاسخ به یک تیکت، روی اعلان همون تیکت Reply کن یا از پنل استفاده کن.");
   return supportMessage(env, db, msg, text);
 }
 
-async function handleCallback(env, db, cq) {
+async function handleCallback(env, db, cq, origin) {
   const answer = (text = "") => tg(env, "answerCallbackQuery", { callback_query_id: cq.id, text }).catch(() => {});
   const data = String(cq.data || "");
   const chatId = cq.message && cq.message.chat ? cq.message.chat.id : cq.from.id;
@@ -355,7 +379,176 @@ async function handleCallback(env, db, cq) {
   if (wal) { await answer(); return setWallet(env, db, chatId, String(cq.from.id), wal[1] === "1"); }
   const dec = data.match(/^(rc|rj):(\d{1,12})(?::([a-z0-9_]{1,16}))?$/);
   if (dec) return adminDecide(env, db, cq, dec[1], Number(dec[2]), dec[3] || "", answer);
+  if (data === "menu:me") { await answer(); return sendMyStatus(env, db, chatId, String(cq.from.id)); }
+  const tkl = data.match(/^tk:l:([oca])$/);
+  if (tkl) {
+    if (!isAdmin(env, cq.from.id)) return answer("⛔ فقط ادمین");
+    await answer();
+    return ticketsList(env, db, chatId, tkl[1]);
+  }
+  const tkv = data.match(/^tk:([vcoqs]):(\d{1,12})(?::(\d))?$/);
+  if (tkv) {
+    if (!isAdmin(env, cq.from.id)) return answer("⛔ فقط ادمین");
+    const act = tkv[1], id = Number(tkv[2]);
+    if (act === "v") { await answer(); return ticketView(env, db, chatId, id); }
+    if (act === "c" || act === "o") {
+      const ok = await ticketSetStatus(env, db, id, act === "c" ? "closed" : "open", "bot");
+      await answer(ok ? (act === "c" ? "بسته شد" : "دوباره باز شد") : "تیکت پیدا نشد");
+      return ticketView(env, db, chatId, id);
+    }
+    if (act === "q") { await answer(); return quickReplyMenu(env, chatId, id); }
+    const i = Number(tkv[3]);
+    if (!QUICK_REPLIES[i]) return answer("گزینه‌ی نامعتبر");
+    const res = await ticketReply(env, db, id, QUICK_REPLIES[i]);
+    await answer(res.error ? res.error : res.delivered ? "ارسال شد" : "ذخیره شد؛ به کاربر نرسید");
+    return ticketView(env, db, chatId, id);
+  }
   await answer();
+}
+
+/* ---------------- ربات: پنل ادمین، تیکت‌ها و حساب کاربر ---------------- */
+const NOT_ADMIN = "⛔ این دستور فقط برای ادمین پنله.";
+const ADMIN_HINT = "🛠 دستورهای ادمین:\n/panel — پنل و ورود خودکار\n/tickets — تیکت‌های باز (یا /tickets closed)\n/reply ID متن — پاسخ به تیکت";
+const TICKET_IDLE_MS = 72 * 3600000; // ادمین جواب داده و کاربر ۷۲ ساعت جواب نداده → تیکت بسته می‌شه
+const QUICK_REPLIES = [
+  "سلام 🌷 پیامت رو دیدم و دارم بررسی می‌کنم. به‌زودی جواب می‌دم.",
+  "برای ساخت کانفیگ، از سایت وارد شو و از بخش ساخت استفاده کن. اگه خطا گرفتی، متنش رو همین‌جا بفرست.",
+  "پرداختت رو بررسی کردم. اگه اشتراکت هنوز فعال نشده، رسید پرداخت رو همین‌جا بفرست.",
+  "آیا مشکلت برطرف شد؟ اگه بله، این تیکت رو می‌بندم. اگه نه، همین‌جا بنویس.",
+  "ممنون از صبرت. هر وقت سوالی داشتی دوباره همین‌جا بنویس.",
+];
+
+// پنل ادمین: لینک پنل + لینک ورود خودکار یک‌بار مصرف (توکن مثل ورود با تلگرام، ۱۰ دقیقه)
+async function adminPanelMenu(env, db, chatId, origin) {
+  const now = Date.now(), t = randHex(12);
+  await db.batch([
+    db.prepare("DELETE FROM admin_tokens WHERE created<?").bind(now - 3600000),
+    db.prepare("INSERT INTO admin_tokens(token,created,verified) VALUES(?,?,1)").bind(t, now),
+  ]);
+  const open = await db.prepare("SELECT COUNT(*) n FROM tickets WHERE status='open'").first();
+  return tg(env, "sendMessage", {
+    chat_id: chatId,
+    text: `🛠 پنل مدیریت IMRC\n🎫 تیکت‌های باز: ${fa(open ? open.n : 0)}\n\nلینک «ورود خودکار» یک‌بار مصرفه و ۱۰ دقیقه اعتبار داره.`,
+    reply_markup: { inline_keyboard: [
+      [{ text: "🖥 باز کردن پنل", url: origin + "/admin.html" }],
+      [{ text: "🔐 ورود خودکار به پنل", url: origin + "/api/admin/tg/auto?t=" + t }],
+      [{ text: "🎫 تیکت‌های باز", callback_data: "tk:l:o" }],
+    ] },
+  }).catch(() => {});
+}
+
+// GET /api/admin/tg/auto?t=…  → سشن ادمین + هدایت به پنل (فقط توکنی که ربات برای ADMIN_TG_ID ساخته)
+async function adminTgAuto(env, url) {
+  const token = url.searchParams.get("t") || "";
+  const fail = (msg) => new Response(msg, { status: 400, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+  if (!/^[a-f0-9]{24}$/.test(token)) return fail("لینک معتبر نیست.");
+  const db = await getDB(env);
+  const now = Date.now();
+  const del = await db.prepare("DELETE FROM admin_tokens WHERE token=? AND verified=1 AND created>?")
+    .bind(token, now - TOKEN_MS).run();
+  if (!(del.meta && del.meta.changes)) return fail("این لینک منقضی شده یا قبلاً استفاده شده. دوباره /panel رو در ربات بزن.");
+  const sid = randHex(16);
+  await db.batch([
+    db.prepare("INSERT INTO admin_sessions(sid,created) VALUES(?,?)").bind(sid, now),
+    db.prepare("DELETE FROM admin_sessions WHERE created<?").bind(now - ADMIN_SESSION_MS),
+  ]);
+  await audit(db, "admin", "login_bot", "", "ورود خودکار از ربات");
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: "/admin.html",
+      "Set-Cookie": `imrc_admin=${sid}; Path=/; Max-Age=${ADMIN_SESSION_MS / 1000}; HttpOnly; Secure; SameSite=Strict`,
+    },
+  });
+}
+
+// لیست تیکت‌ها: mode = o (باز) | c (بسته) | a (همه)
+async function ticketsList(env, db, chatId, mode) {
+  const where = mode === "c" ? "t.status='closed'" : mode === "a" ? "1=1" : "t.status='open'";
+  const rows = (await db.prepare(`SELECT t.id,t.name,t.status,
+      (SELECT text FROM ticket_msgs m WHERE m.ticket_id=t.id ORDER BY m.id DESC LIMIT 1) last
+    FROM tickets t WHERE ${where} ORDER BY t.updated DESC LIMIT 10`).all()).results || [];
+  const label = mode === "c" ? "بسته" : mode === "a" ? "همه" : "باز";
+  const kb = rows.map((t) => [{ text: `#${t.id} ${t.name || "-"}: ${String(t.last || "").slice(0, 28)}`, callback_data: "tk:v:" + t.id }]);
+  kb.push([{ text: "🟢 باز", callback_data: "tk:l:o" }, { text: "⚪️ بسته", callback_data: "tk:l:c" }, { text: "📋 همه", callback_data: "tk:l:a" }]);
+  return tg(env, "sendMessage", {
+    chat_id: chatId,
+    text: rows.length ? `🎫 تیکت‌های ${label} (حداکثر ۱۰ مورد اخیر)` : `🎫 تیکتی در دسته‌ی «${label}» نیست.`,
+    reply_markup: { inline_keyboard: kb },
+  }).catch(() => {});
+}
+
+async function ticketView(env, db, chatId, id) {
+  const t = await db.prepare("SELECT id,tg_id,name,username,status FROM tickets WHERE id=?").bind(id).first();
+  if (!t) return tg(env, "sendMessage", { chat_id: chatId, text: "تیکت پیدا نشد." }).catch(() => {});
+  const rows = (await db.prepare("SELECT sender,text FROM ticket_msgs WHERE ticket_id=? ORDER BY id DESC LIMIT 6").bind(id).all()).results || [];
+  let body = rows.reverse().map((m) => `${m.sender === "admin" ? "🛠 ادمین" : "👤 کاربر"}: ${m.text}`).join("\n\n");
+  if (body.length > 3000) body = "…" + body.slice(-3000);
+  const text = `🎫 تیکت #${t.id} — ${t.status === "open" ? "🟢 باز" : "⚪️ بسته"}\n${t.name || "-"}${t.username ? " (@" + t.username + ")" : ""}\n🆔 ${t.tg_id}\n\n${body}\n\nبرای پاسخ: /reply ${t.id} متن شما`;
+  return tg(env, "sendMessage", {
+    chat_id: chatId,
+    text: text.slice(0, 4000),
+    reply_markup: { inline_keyboard: [
+      [{ text: "⚡ پاسخ آماده", callback_data: "tk:q:" + t.id }],
+      [t.status === "open" ? { text: "✅ بستن", callback_data: "tk:c:" + t.id } : { text: "🔁 بازکردن", callback_data: "tk:o:" + t.id }],
+      [{ text: "🔙 لیست", callback_data: "tk:l:o" }],
+    ] },
+  }).catch(() => {});
+}
+
+async function quickReplyMenu(env, chatId, id) {
+  const kb = QUICK_REPLIES.map((t, i) => [{ text: t.slice(0, 40) + "…", callback_data: `tk:s:${id}:${i}` }]);
+  kb.push([{ text: "🔙 برگشت به تیکت", callback_data: "tk:v:" + id }]);
+  return tg(env, "sendMessage", {
+    chat_id: chatId,
+    text: `⚡ کدوم پاسخ آماده برای تیکت #${id} فرستاده بشه؟`,
+    reply_markup: { inline_keyboard: kb },
+  }).catch(() => {});
+}
+
+// تغییر وضعیت تیکت (از ربات)؛ با بسته شدن، کاربر هم خبردار می‌شه
+async function ticketSetStatus(env, db, id, status, actor) {
+  const t = await db.prepare("SELECT tg_id FROM tickets WHERE id=?").bind(id).first();
+  if (!t) return false;
+  await db.prepare("UPDATE tickets SET status=?, updated=? WHERE id=?").bind(status, Date.now(), id).run();
+  await audit(db, "admin", status === "closed" ? "ticket_close" : "ticket_open", String(id), actor || "bot");
+  if (status === "closed") {
+    await tg(env, "sendMessage", { chat_id: t.tg_id, text: `🎫 تیکت #${id} بسته شد. هر وقت لازم داشتی دوباره همین‌جا بنویس.` }).catch(() => {});
+  }
+  return true;
+}
+
+// تیکت‌هایی که ادمین آخرین نفر جواب داده و ۷۲ ساعت گذشته → بسته (cron)
+async function autoCloseTickets(env) {
+  const db = await getDB(env);
+  const now = Date.now();
+  const rows = (await db.prepare(`SELECT t.id,t.tg_id FROM tickets t
+      WHERE t.status='open' AND t.updated<?
+        AND (SELECT sender FROM ticket_msgs m WHERE m.ticket_id=t.id ORDER BY m.id DESC LIMIT 1)='admin'
+      ORDER BY t.updated LIMIT 20`).bind(now - TICKET_IDLE_MS).all()).results || [];
+  for (const t of rows) {
+    await db.prepare("UPDATE tickets SET status='closed', updated=? WHERE id=? AND status='open'").bind(now, t.id).run();
+    await audit(db, "system", "ticket_autoclose", String(t.id), "۷۲ ساعت بدون پاسخ کاربر");
+    await tg(env, "sendMessage", { chat_id: t.tg_id, text: `🎫 تیکت #${t.id} به‌خاطر بی‌پاسخ ماندن بسته شد. هر وقت سوالی داشتی، همین‌جا بنویس.` }).catch(() => {});
+  }
+}
+
+// «حساب من»: اشتراک، اعتبار دعوت و تیکت‌های باز
+async function sendMyStatus(env, db, chatId, tgId) {
+  const now = Date.now();
+  const sub = await db.prepare("SELECT until FROM subs WHERE tg_id=?").bind(tgId).first();
+  const w = await db.prepare("SELECT balance FROM wallet WHERE tg_id=?").bind(tgId).first();
+  const open = await db.prepare("SELECT COUNT(*) n FROM tickets WHERE tg_id=? AND status='open'").bind(tgId).first();
+  let subLine = "❌ اشتراک فعال نداری. از «💳 خرید اشتراک» شروع کن.";
+  if (sub && sub.until > now) {
+    const days = Math.max(1, Math.ceil((sub.until - now) / 86400000));
+    subLine = `✅ اشتراک فعال تا ${new Date(sub.until).toLocaleDateString("fa-IR", { timeZone: "Asia/Tehran" })} (${fa(days)} روز مونده)`;
+  }
+  return tg(env, "sendMessage", {
+    chat_id: chatId,
+    text: `👤 حساب من\n\n${subLine}\n🎁 اعتبار دعوت: ${fa(w ? w.balance : 0)} تومان\n🎫 تیکت‌های باز: ${fa(open ? open.n : 0)}`,
+    reply_markup: MAIN_KB,
+  }).catch(() => {});
 }
 
 async function verifyAdminLogin(env, db, token, from, chatId) {
@@ -2016,6 +2209,7 @@ export default {
     try { await sampleUptime(env); } catch (e) { console.error("uptime", e); }
     try { await runReminders(env); } catch (e) { console.error("reminders", e); }
     try { await runBroadcasts(env); } catch (e) { console.error("broadcasts", e); }
+    try { await autoCloseTickets(env); } catch (e) { console.error("tickets", e); }
   },
   async fetch(request, env) {
     return secureHeaders(await this.route(request, env));
@@ -2099,6 +2293,7 @@ export default {
       }
       if (p === "/api/admin/tg/start" && request.method === "POST") return await adminTgStart(env);
       if (p === "/api/admin/tg/check" && request.method === "GET") return await adminTgCheck(env, url);
+      if (p === "/api/admin/tg/auto" && request.method === "GET") return await adminTgAuto(env, url);
       if (p === "/api/admin/logout" && request.method === "POST") return await adminLogout(request, env);
       if (p === "/api/admin/codes" && (request.method === "GET" || request.method === "POST")) {
         const bad = await adminAuth(request, env); if (bad) return bad;

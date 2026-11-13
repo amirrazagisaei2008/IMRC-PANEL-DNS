@@ -263,6 +263,49 @@ const MAIN_KB = {
     [{ text: "🎫 پشتیبانی", callback_data: "menu:support" }],
   ],
 };
+// کیبورد ثابت پایین صفحه (کاربر)
+const REPLY_KB = {
+  keyboard: [
+    [{ text: "💳 خرید اشتراک" }, { text: "👤 حساب من" }],
+    [{ text: "🎁 دعوت دوستان" }, { text: "🎟 کد تخفیف" }],
+    [{ text: "🎫 پشتیبانی" }],
+  ],
+  resize_keyboard: true,
+  is_persistent: true,
+};
+// کیبورد ثابت ادمین: همان دکمه‌های کاربر + بخش مدیریت
+const ADMIN_KB = {
+  keyboard: [
+    ...REPLY_KB.keyboard,
+    [{ text: "🛠 پنل مدیریت" }, { text: "🎫 تیکت‌های باز" }],
+  ],
+  resize_keyboard: true,
+  is_persistent: true,
+};
+// متن دکمه‌ها → دستور متناظر (همان مسیر دستورها اجرا می‌شه)
+const BUTTON_CMDS = {
+  "💳 خرید اشتراک": "/plans",
+  "👤 حساب من": "/me",
+  "🎁 دعوت دوستان": "/invite",
+  "🎫 پشتیبانی": "/support",
+  "🛠 پنل مدیریت": "/panel",
+  "🎫 تیکت‌های باز": "/tickets",
+};
+// فهرست منوی «/» تلگرام
+const USER_COMMANDS = [
+  { command: "start", description: "شروع و منوی اصلی" },
+  { command: "plans", description: "خرید اشتراک" },
+  { command: "me", description: "حساب من: اشتراک و اعتبار" },
+  { command: "invite", description: "دعوت دوستان و جایزه" },
+  { command: "code", description: "ثبت کد تخفیف" },
+  { command: "support", description: "پشتیبانی" },
+  { command: "menu", description: "نمایش منوی دکمه‌ای" },
+];
+const ADMIN_COMMANDS = [
+  { command: "panel", description: "پنل مدیریت و ورود خودکار" },
+  { command: "tickets", description: "تیکت‌های باز" },
+  { command: "reply", description: "پاسخ به تیکت: /reply ID متن" },
+];
 const SUPPORT_HELP = "🎫 پیامت رو همین‌جا بنویس تا برای پشتیبانی فرستاده بشه. جوابت رو همین‌جا می‌گیری.";
 const WELCOME = "سلام 👋\n\n🔐 برای ورود به پنل، توی سایت روی «ورود با تلگرام» بزن.\n\n💳 /plans — خرید اشتراک\n🎟 /code کد — ثبت کد تخفیف\n🎁 /invite — دعوت دوستان (روز رایگان)\n🧾 بعد از پرداخت، عکس رسید رو همین‌جا بفرست.";
 
@@ -309,9 +352,28 @@ async function notifyAdmin(env, db, text) {
   await tg(env, "sendMessage", { chat_id: env.ADMIN_TG_ID, text }).catch(() => {});
 }
 
+// منوی اصلی: پیام خوش‌آمد با کیبورد ثابت، و یک پیام کوتاه با دکمه‌های داخل پیام
+async function sendMainMenu(env, db, chatId, isAdminUser, text) {
+  await tg(env, "sendMessage", { chat_id: chatId, text, reply_markup: isAdminUser ? ADMIN_KB : REPLY_KB }).catch(() => {});
+  return tg(env, "sendMessage", { chat_id: chatId, text: "👇 یا از دکمه‌های داخل پیام انتخاب کن:", reply_markup: MAIN_KB }).catch(() => {});
+}
+
+// فهرست دستورهای «/» برای همه و برای چت ادمین (با دستورهای مدیریتی)
+async function syncBotCommands(env) {
+  const a = await tg(env, "setMyCommands", { commands: USER_COMMANDS, scope: { type: "default" } }).catch(() => ({ ok: false }));
+  let b = { ok: true };
+  if (env.ADMIN_TG_ID) {
+    b = await tg(env, "setMyCommands", { commands: [...USER_COMMANDS, ...ADMIN_COMMANDS], scope: { type: "chat", chat_id: adminTgId(env) } }).catch(() => ({ ok: false }));
+  }
+  return !!(a.ok && b.ok);
+}
+
 async function handleText(env, db, msg, text, origin) {
   const chatId = msg.chat.id, from = msg.from, tgId = String(from.id);
   const reply = (t, extra = {}) => tg(env, "sendMessage", { chat_id: chatId, text: t, ...extra }).catch(() => {});
+  // دکمه‌های کیبورد ثابت → همان دستورها
+  if (BUTTON_CMDS[text]) text = BUTTON_CMDS[text];
+  if (text === "🎟 کد تخفیف") return reply("برای ثبت کد تخفیف، این‌طور بفرست:\n/code کد_تخفیف");
   // ادمین روی اعلان یک تیکت Reply کنه → پاسخ به کاربر
   if (isAdmin(env, from.id) && msg.reply_to_message && text && await adminReplyFromTelegram(env, db, msg, text)) return;
   let m = text.match(/^\/start\s+([a-f0-9]{24})$/);
@@ -321,12 +383,13 @@ async function handleText(env, db, msg, text, origin) {
   m = text.match(/^\/start\s+ref_(\d{3,20})$/);
   if (m) {
     await recordReferral(db, tgId, m[1]).catch(() => {});
-    return reply(await welcomeText(db), { reply_markup: MAIN_KB });
+    return sendMainMenu(env, db, chatId, isAdmin(env, from.id), await welcomeText(db));
   }
   if (/^\/start(\s|$)/.test(text)) {
-    await reply(await welcomeText(db), { reply_markup: MAIN_KB });
+    await sendMainMenu(env, db, chatId, isAdmin(env, from.id), await welcomeText(db));
     return isAdmin(env, from.id) ? reply(ADMIN_HINT) : undefined;
   }
+  if (/^\/menu(@\S+)?(\s|$)/i.test(text)) return sendMainMenu(env, db, chatId, isAdmin(env, from.id), "🏠 منوی اصلی");
   if (/^\/plans(\s|$)/.test(text)) return sendPlans(env, db, chatId);
   if (/^\/invite(\s|$)/.test(text)) return sendInvite(env, db, chatId, tgId);
   m = text.match(/^\/code(?:\s+(\S+))?$/i);
@@ -1297,7 +1360,8 @@ async function adminWebhook(request, env) {
     allowed_updates: ["message", "callback_query"],
     drop_pending_updates: true,
   });
-  return json({ ok: !!r.ok, bot: me.result.username, description: r.description || "" }, r.ok ? 200 : 400);
+  const commands = await syncBotCommands(env);
+  return json({ ok: !!r.ok, bot: me.result.username, description: r.description || "", commands }, r.ok ? 200 : 400);
 }
 
 /* ---------------- پشتیبانی (تیکت) ---------------- */

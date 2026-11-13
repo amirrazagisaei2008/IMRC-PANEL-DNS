@@ -322,7 +322,7 @@ const ADMIN_COMMANDS = [
   { command: "reply", description: "پاسخ به تیکت: /reply ID متن" },
 ];
 const SUPPORT_HELP = "🎫 پیامت رو همین‌جا بنویس تا برای پشتیبانی فرستاده بشه. جوابت رو همین‌جا می‌گیری.";
-const WELCOME = "سلام 👋 به IMRC خوش اومدی.\n\n🔐 برای ورود به پنل، توی سایت روی «ورود با تلگرام» بزن.\n🧾 بعد از پرداخت، عکس رسید رو همین‌جا بفرست.";
+const WELCOME = "سلام 👋 به IMRC خوش اومدی.";
 
 async function tgWebhook(request, env) {
   if (!env.TG_WEBHOOK_SECRET || !safeEq(request.headers.get("X-Telegram-Bot-Api-Secret-Token"), env.TG_WEBHOOK_SECRET))

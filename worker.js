@@ -322,7 +322,7 @@ const ADMIN_COMMANDS = [
   { command: "reply", description: "پاسخ به تیکت: /reply ID متن" },
 ];
 const SUPPORT_HELP = "🎫 پیامت رو همین‌جا بنویس تا برای پشتیبانی فرستاده بشه. جوابت رو همین‌جا می‌گیری.";
-const WELCOME = "سلام 👋\n\n🔐 برای ورود به پنل، توی سایت روی «ورود با تلگرام» بزن.\n\n💳 /plans — خرید اشتراک\n🎟 /code کد — ثبت کد تخفیف\n🎁 /invite — دعوت دوستان (روز رایگان)\n🧾 بعد از پرداخت، عکس رسید رو همین‌جا بفرست.";
+const WELCOME = "سلام 👋 به IMRC خوش اومدی.\n\n🔐 برای ورود به پنل، توی سایت روی «ورود با تلگرام» بزن.\n🧾 بعد از پرداخت، عکس رسید رو همین‌جا بفرست.";
 
 async function tgWebhook(request, env) {
   if (!env.TG_WEBHOOK_SECRET || !safeEq(request.headers.get("X-Telegram-Bot-Api-Secret-Token"), env.TG_WEBHOOK_SECRET))
@@ -368,9 +368,13 @@ async function notifyAdmin(env, db, text) {
 }
 
 // منوی اصلی: پیام خوش‌آمد با کیبورد ثابت، و یک پیام کوتاه با دکمه‌های داخل پیام
+// متن پیش از گزینه‌های داخل چت (دستورها در منوی «/» کنار کادر نوشتن هستن، نه داخل چت)
+const PICK_PROMPT = "یک گزینه رو انتخاب کنید 👇";
+// text اختیاریه: پیام اول فقط برای خوش‌آمد و نشوندن کیبورد ثابت کنار کادر نوشتن
+// پیام دوم همیشه همون عبارت + گزینه‌های داخل چت
 async function sendMainMenu(env, db, chatId, isAdminUser, text) {
-  await tg(env, "sendMessage", { chat_id: chatId, text, reply_markup: isAdminUser ? ADMIN_KB : REPLY_KB }).catch(() => {});
-  return tg(env, "sendMessage", { chat_id: chatId, text: "👇 یا از دکمه‌های داخل پیام انتخاب کن:", reply_markup: MAIN_KB }).catch(() => {});
+  if (text) await tg(env, "sendMessage", { chat_id: chatId, text, reply_markup: isAdminUser ? ADMIN_KB : REPLY_KB }).catch(() => {});
+  return tg(env, "sendMessage", { chat_id: chatId, text: PICK_PROMPT, reply_markup: MAIN_KB }).catch(() => {});
 }
 
 // فهرست دستورهای «/» برای همه و برای چت ادمین (با دستورهای مدیریتی)
@@ -666,10 +670,9 @@ async function handleText(env, db, msg, text, origin) {
     return sendMainMenu(env, db, chatId, isAdmin(env, from.id), await welcomeText(db));
   }
   if (/^\/start(\s|$)/.test(text)) {
-    await sendMainMenu(env, db, chatId, isAdmin(env, from.id), await welcomeText(db));
-    return isAdmin(env, from.id) ? reply(ADMIN_HINT) : undefined;
+    return sendMainMenu(env, db, chatId, isAdmin(env, from.id), await welcomeText(db));
   }
-  if (/^\/menu(@\S+)?(\s|$)/i.test(text)) return sendMainMenu(env, db, chatId, isAdmin(env, from.id), "🏠 منوی اصلی");
+  if (/^\/menu(@\S+)?(\s|$)/i.test(text)) return sendMainMenu(env, db, chatId, isAdmin(env, from.id), null);
   if (/^\/plans(\s|$)/.test(text)) return sendPlans(env, db, chatId);
   if (/^\/config(@\S+)?(\s|$)/i.test(text)) return cfgStart(env, db, chatId, tgId);
   if (/^\/configs(@\S+)?(\s|$)/i.test(text)) return sendMyConfigs(env, db, chatId, tgId);
@@ -701,7 +704,7 @@ async function handleText(env, db, msg, text, origin) {
       : res.delivered ? `✅ پاسخ برای تیکت #${m[1]} فرستاده شد.`
       : "⚠️ پاسخ ذخیره شد ولی به کاربر نرسید (احتمالاً ربات رو بلاک کرده).");
   }
-  if (!text || text.startsWith("/")) return reply("برای شروع /start رو بفرست. 👇", { reply_markup: MAIN_KB });
+  if (!text || text.startsWith("/")) return reply(PICK_PROMPT, { reply_markup: MAIN_KB });
   if (isAdmin(env, from.id)) return reply("برای پاسخ به یک تیکت، روی اعلان همون تیکت Reply کن یا از پنل استفاده کن.");
   return supportMessage(env, db, msg, text);
 }
@@ -755,7 +758,6 @@ async function handleCallback(env, db, cq, origin) {
 
 /* ---------------- ربات: پنل ادمین، تیکت‌ها و حساب کاربر ---------------- */
 const NOT_ADMIN = "⛔ این دستور فقط برای ادمین پنله.";
-const ADMIN_HINT = "🛠 دستورهای ادمین:\n/panel — پنل و ورود خودکار\n/tickets — تیکت‌های باز (یا /tickets closed)\n/reply ID متن — پاسخ به تیکت";
 const TICKET_IDLE_MS = 72 * 3600000; // ادمین جواب داده و کاربر ۷۲ ساعت جواب نداده → تیکت بسته می‌شه
 const QUICK_REPLIES = [
   "سلام 🌷 پیامت رو دیدم و دارم بررسی می‌کنم. به‌زودی جواب می‌دم.",

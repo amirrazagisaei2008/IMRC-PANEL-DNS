@@ -347,6 +347,17 @@ body.theme-tactical .au,body.theme-blood .au,body.theme-operator .au{opacity:.17
 #rwT{font-size:1.5rem;font-weight:800;margin:.7rem 0 .2rem}#rwD{color:var(--dim);margin-bottom:1rem}
 @keyframes hue{to{filter:hue-rotate(360deg)}}
 
+.tg-banner{display:flex;align-items:center;gap:.8rem;margin:0 0 1rem;padding:.7rem .9rem;border:1px solid color-mix(in srgb,var(--ac) 40%,var(--line));border-radius:14px;background:linear-gradient(120deg,color-mix(in srgb,var(--ac) 16%,var(--sf)),var(--sf) 70%);color:var(--ink);text-decoration:none;transition:transform .2s,box-shadow .2s}
+.tg-banner:hover{transform:translateY(-1px);box-shadow:0 8px 24px -12px var(--ac)}
+.tg-ic{flex:0 0 2.4rem;height:2.4rem;border-radius:50%;background:#2aabee;display:grid;place-items:center}
+.tg-ic svg{width:1.2rem;height:1.2rem;fill:#fff}
+.tg-txt{display:flex;flex-direction:column;min-width:0}
+.tg-txt b{font-size:.95rem}
+.tg-txt small{color:var(--dim);font-size:.78rem;line-height:1.6}
+.tg-handle{direction:ltr;font-family:ui-monospace,Menlo,monospace;font-size:.8rem;color:var(--ac);white-space:nowrap}
+.tg-go{margin-inline-start:auto;padding:.4rem .9rem;border-radius:99px;background:var(--ac);color:var(--acx);font-weight:700;font-size:.8rem;white-space:nowrap}
+@media(max-width:560px){.tg-handle{display:none}}
+.name-hint{display:block;margin-top:.35rem;color:var(--dim);font-size:.75rem}
 </style>
 </head>
 <body class="theme-tactical">
@@ -421,6 +432,13 @@ body.theme-tactical .au,body.theme-blood .au,body.theme-operator .au{opacity:.17
       <div class="live-clock" id="liveClock">—</div>
     </header>
 
+    <a class="tg-banner" href="https://t.me/IMRC_Panel" target="_blank" rel="noopener">
+      <span class="tg-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21.5 3.5 2.8 10.7c-.8.3-.8 1.4 0 1.7l4.6 1.5 1.8 5.5c.2.6 1 .8 1.4.3l2.5-2.4 4.6 3.4c.6.4 1.4.1 1.6-.6L23 4.6c.2-.9-.6-1.5-1.5-1.1z"/></svg></span>
+      <span class="tg-txt"><b>کانال رسمی IMRC</b><small>آپدیت‌ها، سرورهای جدید و خبرهای پنل</small></span>
+      <span class="tg-handle">@IMRC_Panel</span>
+      <span class="tg-go">عضویت</span>
+    </a>
+
     <div id="quotaBar" style="display:none;margin:0 0 1rem;padding:.6rem .9rem;border:1px solid var(--line);border-radius:12px;font-size:.85rem;text-align:center;background:var(--sf2);color:var(--ink)"></div>
 
     <!-- BUILD -->
@@ -445,9 +463,9 @@ body.theme-tactical .au,body.theme-blood .au,body.theme-operator .au{opacity:.17
                 <button class="mode-btn" data-mode="mp" onclick="setMode('mp')">مالتی‌پلیر</button>
               </div></div>
             <div class="sec"><label class="lbl" for="username">نام فایل</label>
-              <div class="row"><input id="username" maxlength="12" placeholder="مثلاً IMRC-8-20"/><button class="mini" onclick="smartName()">نام خودکار</button></div></div>
+              <div class="row"><input id="username" maxlength="20" placeholder="مثلاً IMRC-8-20"/><button class="mini" onclick="smartName()">نام خودکار</button></div><small class="name-hint">همیشه با IMRC شروع می‌شه؛ بعدش هر اسمی خواستی بزار</small></div>
             <div class="grid sec">
-              <div><label class="lbl" for="volume">حجم</label><select id="volume"><option value="20">۲۰ گیگ</option><option value="50" selected>۵۰ گیگ</option><option value="100">۱۰۰ گیگ</option><option value="unlimited">نامحدود</option></select></div>
+              <div><label class="lbl" for="users">تعداد کاربر</label><select id="users"><option value="1" selected>۱ کاربر</option><option value="2">۲ کاربر</option><option value="3">۳ کاربر</option><option value="5">۵ کاربر</option><option value="10">۱۰ کاربر</option></select></div>
               <div><label class="lbl" for="duration">مدت</label><select id="duration"><option value="7">۷ روز</option><option value="30" selected>۳۰ روز</option><option value="90">۹۰ روز</option><option value="365">۱ سال</option></select></div>
             </div>
             <div class="grid sec">
@@ -758,7 +776,14 @@ function initBgParticles(){
 
 
 /* ===== Config naming ===== */
-const NAME_MAX = 12;
+const NAME_MAX = 20;
+/* هر اسم کانفیگ با IMRC شروع می‌شه؛ بعدش هر چی کاربر بخواد. مثال: bob → IMRC-bob ، IMRC_x → IMRC_x */
+function imrcName(v){
+  let rest=String(v??"").replace(/[\u0000-\u001f<>\/\\:*?"|]/g,"").trim().replace(/^imrc/i,"");
+  const sep=/^[-_]/.test(rest)?rest[0]:"-";
+  rest=rest.replace(/^[\s_-]+/,"").trim();
+  return (rest?"IMRC"+sep+rest:"IMRC").slice(0,NAME_MAX);
+}
 function g2j(gy,gm,gd){const g=[0,31,59,90,120,151,181,212,243,273,304,334];let jy=(gy>1600)?979:0;gy-=(gy>1600)?1600:621;const gy2=(gm>2)?(gy+1):gy;let days=(365*gy)+Math.floor((gy2+3)/4)-Math.floor((gy2+99)/100)+Math.floor((gy2+399)/400)-80+gd+g[gm-1];jy+=33*Math.floor(days/12053);days%=12053;jy+=4*Math.floor(days/1461);days%=1461;if(days>365){jy+=Math.floor((days-1)/365);days=(days-1)%365}const jm=(days<186)?1+Math.floor(days/31):7+Math.floor((days-186)/30);const jd=1+((days<186)?(days%31):((days-186)%30));return[jm,jd]}
 function shamsiMD(){
   const d=new Date();
@@ -770,7 +795,7 @@ function shamsiMD(){
   return g2j(d.getFullYear(),d.getMonth()+1,d.getDate());
 }
 function autoName(){const t=shamsiMD();return"IMRC-"+t[0]+"-"+t[1]}
-function setUser(v){document.getElementById("username").value=String(v).slice(0,NAME_MAX)}
+function setUser(v){document.getElementById("username").value=imrcName(v)}
 function setAutoName(){setUser(autoName())}
 
 /* ========== CORE ========== */
@@ -901,8 +926,8 @@ function renderRecs(){const best=allCountries.filter(c=>c.codm).sort((a,b)=>a.pi
 function setMode(m){currentMode=m;document.querySelectorAll(".mode-btn").forEach(b=>b.classList.remove("active"));document.querySelector(`.mode-btn[data-mode="${m}"]`).classList.add("active");if(m==="ranked"){document.getElementById("mtu").value="1350";document.getElementById("dns").value="10.202.10.10, 78.157.42.101"}else if(m==="br"){document.getElementById("mtu").value="1400"}else{document.getElementById("mtu").value="1420"}playSound("click")}
 function setRole(r){currentRole=r;document.querySelectorAll(".role-chip").forEach(c=>c.classList.remove("active"));document.querySelector(`.role-chip[data-role="${r}"]`).classList.add("active");playSound("click")}
 function applyPreset(type){document.querySelectorAll(".preset-chip").forEach(c=>c.classList.remove("active"));if(typeof event!=="undefined"&&event&&event.target&&event.target.classList)event.target.classList.add("active");if(type==="ranked"){setMode("ranked");setRegion("tr");document.getElementById("mtu").value="1280";document.getElementById("dns").value="10.202.10.10, 78.157.42.101"}else if(type==="br"){setMode("br");setRegion("ae");document.getElementById("mtu").value="1400"}else if(type==="lowping"){setMode("ranked");setRegion("tr");document.getElementById("mtu").value="1280";document.getElementById("dns").value="1.1.1.1, 1.0.0.1"}else{setMode("ranked");setRegion("de");document.getElementById("mtu").value="1350"}setAutoName();playSound("ok")}
-function codmOptimize(){setMode("ranked");setRole("attacker");setRegion("tr");document.getElementById("mtu").value="1280";document.getElementById("dns").value="10.202.10.10, 78.157.42.101";document.getElementById("volume").value="50";document.getElementById("duration").value="30";if(!document.getElementById("username").value.trim())setAutoName();playSound("ok");buildAndDownload(true)}
-function optimizeDevice(type){if(type==="weak"){document.getElementById("mtu").value="1280";document.getElementById("volume").value="20";toast("تنظیمات دستگاه ضعیف")}else{document.getElementById("mtu").value="1420";document.getElementById("volume").value="100";toast("تنظیمات پرچم‌دار")}playSound("ok")}
+function codmOptimize(){setMode("ranked");setRole("attacker");setRegion("tr");document.getElementById("mtu").value="1280";document.getElementById("dns").value="10.202.10.10, 78.157.42.101";document.getElementById("duration").value="30";if(!document.getElementById("username").value.trim())setAutoName();playSound("ok");buildAndDownload(true)}
+function optimizeDevice(type){if(type==="weak"){document.getElementById("mtu").value="1280";toast("تنظیمات دستگاه ضعیف")}else{document.getElementById("mtu").value="1420";toast("تنظیمات پرچم‌دار")}playSound("ok")}
 function setTournamentMode(){applyPreset("tournament");toast("حالت تورنمنت فعال شد 🏅")}
 function updateRankTimer(){const hours=[14,16,18,21,23];const best=hours[Math.floor(Math.random()*hours.length)];const now=new Date();const reset=new Date(now);reset.setHours(24,0,0,0);const diff=Math.floor((reset-now)/60000);const h=Math.floor(diff/60);const m=diff%60;document.getElementById("rankTimer").innerHTML=`⏰ ریست بعدی رنک: حدود ${h} ساعت و ${m} دقیقه<br>🌟 بهترین زمان بازی امروز: ساعت ${best}:00`}
 function randomName(){setAutoName();playSound("click")}
@@ -996,9 +1021,10 @@ function showModal(title,msg){
 let building=false;
 async function buildAndDownload(isQuick=false){
   if(building)return;
-  let u=document.getElementById("username").value.trim().slice(0,NAME_MAX);
+  if(!document.getElementById("username").value.trim())setAutoName();
+  const u=imrcName(document.getElementById("username").value);
+  setUser(u);
   const r=document.getElementById("region").value;
-  if(!u){setAutoName();u=document.getElementById("username").value}
   if(!r){alert("⚠️ یک کشور انتخاب کن!");return}
 
   building=true;
@@ -1071,7 +1097,7 @@ async function buildAndDownload(isQuick=false){
 
     const note=document.getElementById("configNote")?.value||"";
     const tagsStr=document.getElementById("configTags")?.value||"";
-    saveHistory({name:u,code:r,flag:country?.flag||"",date:new Date().toLocaleString("fa-IR"),config:c,days,mode:currentMode,role:currentRole,pings,note,tags:tagsStr});
+    saveHistory({name:u,code:r,flag:country?.flag||"",date:new Date().toLocaleString("fa-IR"),config:c,days,mode:currentMode,role:currentRole,users:+document.getElementById("users").value||1,pings,note,tags:tagsStr});
 
     playSound("ok");vibrate(60);confetti();
     renderStats();renderAchievements();
@@ -1254,7 +1280,7 @@ function closeSuccess(){
 function updateSummary(){
   const c=allCountries.find(x=>x.code===document.getElementById("region").value);
   const m={ranked:"رنکد",br:"بتل‌رویال",mp:"مالتی‌پلیر"}[currentMode]||currentMode;
-  document.getElementById("sum").innerHTML=(c?`<b>${c.flag} ${c.name}</b><span>${c.ping}ms</span>`:"<b>سروری انتخاب نشده</b>")+`<span>${m}</span><span>MTU ${getMtu()}</span>`;
+  document.getElementById("sum").innerHTML=(c?`<b>${c.flag} ${c.name}</b><span>${c.ping}ms</span>`:"<b>سروری انتخاب نشده</b>")+`<span>${m}</span><span>MTU ${getMtu()}</span><span>${(+document.getElementById("users").value||1).toLocaleString("fa-IR")} کاربر</span>`;
 }
 ["click","change","input"].forEach(ev=>document.addEventListener(ev,()=>setTimeout(updateSummary,0)));
 
@@ -1337,6 +1363,7 @@ function dog(){const l=lvl(),x=xp(),n=XPT[l+1],p=n?Math.round((x-XPT[l])/(n-XPT[
 
 /* radar */
 function radar(){const r=Q("radar");r.innerHTML=allCountries.map((c,i)=>{const a=i/allCountries.length*6.283,d=Math.min(c.ping/140,1)*44+4;return `<button class="blip" title="${c.name} ${c.ping}ms" aria-label="${c.name} ${c.ping}ms" style="left:${50+Math.cos(a)*d}%;top:${50+Math.sin(a)*d}%" onclick="setRegion('${c.code}');switchTab('main')"></button>`}).join("")}
+window.radar=radar;
 
 /* live ping HUD */
 let lp=[],lt=null,fi=null;
@@ -1444,7 +1471,7 @@ function hero(){const h=new Date().getHours(),g=h<5?"شب بخیر":h<11?"صبح
  Q("hXp").style.width=(n?Math.round((x-XPT[l])/(n-XPT[l])*100):100)+"%";
  const d=LS("IMRC_chest","")===day(),c=Q("chest");c.classList.toggle("done",d);c.textContent=d?"فردا برگرد":"صندوق روزانه"}
 const tips=["قبل از رنکد پینگ را تست کن","MTU پایین‌تر یعنی پایداری بیشتر روی دیتا","DNS الکترو را امتحان کن","هر روز صندوق را باز کن","با کلید W حالت جنگی را روشن کن","Ctrl+K همه‌چیز را پیدا می‌کند"];
-function mq(){const a=allCountries.filter(c=>c.codm).sort((x,y)=>x.ping-y.ping).map(c=>`<span>${c.flag} ${c.name} <b>${c.ping}ms</b></span>`).concat(tips.map(t=>`<span>${t}</span>`)).join("");Q("mqt").innerHTML=a+a}
+function mq(){const a=allCountries.filter(c=>c.codm).sort((x,y)=>x.ping-y.ping).map(c=>`<span>${c.flag} ${c.name} <b data-code="${c.code}">${c.ping}ms</b></span>`).concat(tips.map(t=>`<span>${t}</span>`)).join("");Q("mqt").innerHTML=a+a}
 
 /* chest */
 document.body.insertAdjacentHTML("beforeend",`<div id="rwd"><div class="rc" id="rc">${LOGO()}<div id="rwT">...</div><div id="rwD"></div><button class="btn" onclick="Q_rwd(0)">برداشتم</button></div></div>`);
@@ -1469,6 +1496,27 @@ if(first)SV("IMRC_badges",[]);
 function levelCheck(){const l=lvl(),p=LS("IMRC_lastlv",null);if(p===null||l<p){SV("IMRC_lastlv",l);return}if(l>p){SV("IMRC_lastlv",l);Q("rwT").textContent="ارتقا به سطح "+(l+1);Q("rwD").textContent=LV[l];Q("rwd").classList.add("on");burst(innerWidth/2,innerHeight/2,140,10);siren(900)}}
 function tick(){hero();badges();levelCheck()}
 mq();hero();badges();window._b0=1;setInterval(tick,2000);
+
+/* ===== پینگ‌های زنده: هر ۳ ثانیه هر کشور کمی حول مقدار پایه‌اش تغییر می‌کنه ===== */
+allCountries.forEach(c=>{if(c.base==null)c.base=c.ping});
+function driftPings(){
+  allCountries.forEach(c=>{
+    const lo=Math.round(c.base*0.8), hi=Math.round(c.base*1.35);
+    const pull=(c.base-c.ping)*0.25, noise=(Math.random()-0.5)*12;
+    c.ping=Math.max(lo,Math.min(hi,Math.round(c.ping+pull+noise)));
+  });
+  refreshPingViews();
+}
+function refreshPingViews(){
+  allCountries.forEach(c=>{
+    const pg=document.querySelector(`#boardRows .row-s[data-code="${c.code}"] .pg`);
+    if(pg&&pg.firstChild){pg.dataset.v=c.ping;pg.className=`pg ${c.ping<=55?"pg-g":c.ping<=70?"pg-y":"pg-r"}`;pg.firstChild.nodeValue=c.ping}
+    document.querySelectorAll(`#mqt b[data-code="${c.code}"]`).forEach(b=>{b.textContent=c.ping+"ms"});
+  });
+  renderRecs();if(window.radar)window.radar();updateSummary();
+}
+setInterval(driftPings,3000);
+document.getElementById("username").addEventListener("change",()=>setUser(document.getElementById("username").value));
 const _ts=window.switchTab;window.switchTab=function(n){_ts(n);if(n==="war")document.body.dataset.warSeen=1,SV("IMRC_warSeen",true)};
 
 /* ambient music */

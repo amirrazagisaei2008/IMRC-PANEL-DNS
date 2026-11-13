@@ -4,6 +4,12 @@
  */
 (function(){
   const DICT = {
+ "تعداد کاربر": "Users",
+ "۱ کاربر": "1 user", "۲ کاربر": "2 users", "۳ کاربر": "3 users", "۵ کاربر": "5 users", "۱۰ کاربر": "10 users",
+ "کانال رسمی IMRC": "Official IMRC channel",
+ "آپدیت‌ها، سرورهای جدید و خبرهای پنل": "Updates, new servers and panel news",
+ "عضویت": "Join",
+ "همیشه با IMRC شروع می‌شه؛ بعدش هر اسمی خواستی بزار": "Always starts with IMRC; add any name after it",
  "خوش آمدید": "Welcome",
  "کانفیگ WireGuard بهینه برای Call of Duty Mobile؛ با سرور، MTU و DNS مناسب رنکد.": "Optimized WireGuard config for Call of Duty Mobile, with a ranked-ready server, MTU and DNS.",
  "شروع معرفی": "Start tour",
@@ -52,11 +58,6 @@
  "مالتی‌پلیر": "Multiplayer",
  "نام فایل": "File name",
  "نام خودکار": "Auto name",
- "حجم": "Data cap",
- "۲۰ گیگ": "20 GB",
- "۵۰ گیگ": "50 GB",
- "۱۰۰ گیگ": "100 GB",
- "نامحدود": "Unlimited",
  "مدت": "Duration",
  "۷ روز": "7 days",
  "۳۰ روز": "30 days",

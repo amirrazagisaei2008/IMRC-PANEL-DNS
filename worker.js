@@ -13,6 +13,14 @@ const json = (o, s = 200, headers = {}) =>
     status: s,
     headers: { "Content-Type": "application/json", "Cache-Control": "no-store", ...headers },
   });
+const IMRC_NAME_MAX = 20;
+// هر اسم کانفیگ با IMRC شروع می‌شه؛ بعدش هر چی کاربر بخواد
+function imrcName(v) {
+  let rest = String(v ?? "").replace(/[\u0000-\u001f<>\/\\:*?"|]/g, "").trim().replace(/^imrc/i, "");
+  const sep = /^[-_]/.test(rest) ? rest[0] : "-";
+  rest = rest.replace(/^[\s_-]+/, "").trim();
+  return (rest ? "IMRC" + sep + rest : "IMRC").slice(0, IMRC_NAME_MAX);
+}
 const clean = (v, n = 40) => String(v ?? "").replace(/[\u0000-\u001f<>]/g, "").trim().slice(0, n);
 const randHex = (bytes) =>
   [...crypto.getRandomValues(new Uint8Array(bytes))].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -990,7 +998,7 @@ async function createConfig(request, env) {
   if (b.mtu) { const n = parseInt(b.mtu); if (!(n >= 576 && n <= 1500)) return json({ error: "MTU نامعتبر است" }, 400); mtu = String(n); }
   const mode = MODES.has(b.mode) ? b.mode : "ranked";
   const role = ROLES.has(b.role) ? b.role : "attacker";
-  const name = clean(b.name, 12);
+  const name = imrcName(b.name);
 
   const db = await getDB(env);
   const now = Date.now();
@@ -1055,7 +1063,7 @@ async function track(request, env) {
   const ipHash = await sha((request.headers.get("CF-Connecting-IP") || "") + (env.ADMIN_PASSWORD || "salt"));
   const country = (request.cf && request.cf.country) || "";
   const city = (request.cf && request.cf.city) || "";
-  const name = type === "config" ? clean(data.name, 12) : "";
+  const name = type === "config" ? imrcName(data.name) : "";
   const dv = type === "visit" ? 1 : 0, dc = type === "config" ? 1 : 0, da = type === "action" ? 1 : 0;
 
   const stmts = [

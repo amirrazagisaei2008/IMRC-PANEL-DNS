@@ -463,7 +463,7 @@ body.theme-tactical .au,body.theme-blood .au,body.theme-operator .au{opacity:.17
                 <button class="mode-btn" data-mode="mp" onclick="setMode('mp')">مالتی‌پلیر</button>
               </div></div>
             <div class="sec"><label class="lbl" for="username">نام فایل</label>
-              <div class="row"><input id="username" maxlength="20" placeholder="مثلاً IMRC-8-20"/><button class="mini" onclick="smartName()">نام خودکار</button></div><small class="name-hint">همیشه با IMRC شروع می‌شه؛ بعدش هر اسمی خواستی بزار</small></div>
+              <div class="row"><input id="username" maxlength="15" placeholder="مثلاً IMRC-8-20"/><button class="mini" onclick="smartName()">نام خودکار</button></div><small class="name-hint">همیشه با IMRC شروع می‌شه؛ بعدش هر اسمی خواستی بزار</small></div>
             <div class="grid sec">
               <div><label class="lbl" for="users">تعداد کاربر</label><select id="users"><option value="1" selected>۱ کاربر</option><option value="2">۲ کاربر</option><option value="3">۳ کاربر</option><option value="5">۵ کاربر</option><option value="10">۱۰ کاربر</option></select></div>
               <div><label class="lbl" for="duration">مدت</label><select id="duration"><option value="7">۷ روز</option><option value="30" selected>۳۰ روز</option><option value="90">۹۰ روز</option><option value="365">۱ سال</option></select></div>
@@ -776,7 +776,7 @@ function initBgParticles(){
 
 
 /* ===== Config naming ===== */
-const NAME_MAX = 20;
+const NAME_MAX = 15;
 /* هر اسم کانفیگ با IMRC شروع می‌شه؛ بعدش هر چی کاربر بخواد. مثال: bob → IMRC-bob ، IMRC_x → IMRC_x */
 function imrcName(v){
   let rest=String(v??"").replace(/[\u0000-\u001f<>\/\\:*?"|]/g,"").trim().replace(/^imrc/i,"");

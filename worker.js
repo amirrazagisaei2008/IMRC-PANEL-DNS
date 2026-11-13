@@ -13,7 +13,7 @@ const json = (o, s = 200, headers = {}) =>
     status: s,
     headers: { "Content-Type": "application/json", "Cache-Control": "no-store", ...headers },
   });
-const IMRC_NAME_MAX = 20;
+const IMRC_NAME_MAX = 15;
 // هر اسم کانفیگ با IMRC شروع می‌شه؛ بعدش هر چی کاربر بخواد
 function imrcName(v) {
   let rest = String(v ?? "").replace(/[\u0000-\u001f<>\/\\:*?"|]/g, "").trim().replace(/^imrc/i, "");
@@ -109,6 +109,7 @@ function getDB(env) {
           total INTEGER, sent INTEGER DEFAULT 0, failed INTEGER DEFAULT 0, cursor TEXT DEFAULT '',
           created INTEGER, finished INTEGER)`),
         env.DB.prepare("CREATE TABLE IF NOT EXISTS uptime_samples(ts INTEGER PRIMARY KEY, ok INTEGER)"),
+        env.DB.prepare("CREATE TABLE IF NOT EXISTS bot_state(tg_id TEXT PRIMARY KEY, draft TEXT, awaiting TEXT DEFAULT '', mid INTEGER DEFAULT 0, ts INTEGER)"),
         env.DB.prepare("CREATE TABLE IF NOT EXISTS incidents(id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, level TEXT, body TEXT, started INTEGER, resolved INTEGER)"),
         env.DB.prepare("CREATE TABLE IF NOT EXISTS wallet(tg_id TEXT PRIMARY KEY, balance INTEGER DEFAULT 0)"),
         env.DB.prepare("CREATE TABLE IF NOT EXISTS wallet_log(id INTEGER PRIMARY KEY AUTOINCREMENT, tg_id TEXT, ts INTEGER, delta INTEGER, reason TEXT)"),
@@ -265,6 +266,7 @@ const adminTgId = (env) => String(env.ADMIN_TG_ID ?? "").trim();
 const isAdmin = (env, id) => !!adminTgId(env) && String(id) === adminTgId(env);
 const MAIN_KB = {
   inline_keyboard: [
+    [{ text: "⚡ ساخت کانفیگ", callback_data: "menu:config" }],
     [{ text: "💳 خرید اشتراک", callback_data: "menu:plans" }],
     [{ text: "🎁 دعوت دوستان", callback_data: "menu:invite" }],
     [{ text: "👤 حساب من", callback_data: "menu:me" }],
@@ -275,6 +277,7 @@ const MAIN_KB = {
 const REPLY_KB = {
   keyboard: [
     [{ text: "💳 خرید اشتراک" }, { text: "👤 حساب من" }],
+    [{ text: "⚡ ساخت کانفیگ" }, { text: "📂 کانفیگ‌های من" }],
     [{ text: "🎁 دعوت دوستان" }, { text: "🎟 کد تخفیف" }],
     [{ text: "🎫 پشتیبانی" }],
   ],
@@ -294,6 +297,8 @@ const ADMIN_KB = {
 const BUTTON_CMDS = {
   "💳 خرید اشتراک": "/plans",
   "👤 حساب من": "/me",
+  "⚡ ساخت کانفیگ": "/config",
+  "📂 کانفیگ‌های من": "/configs",
   "🎁 دعوت دوستان": "/invite",
   "🎫 پشتیبانی": "/support",
   "🛠 پنل مدیریت": "/panel",
@@ -302,6 +307,8 @@ const BUTTON_CMDS = {
 // فهرست منوی «/» تلگرام
 const USER_COMMANDS = [
   { command: "start", description: "شروع و منوی اصلی" },
+  { command: "config", description: "ساخت کانفیگ (همون امکانات پنل)" },
+  { command: "configs", description: "کانفیگ‌های من" },
   { command: "plans", description: "خرید اشتراک" },
   { command: "me", description: "حساب من: اشتراک و اعتبار" },
   { command: "invite", description: "دعوت دوستان و جایزه" },
@@ -376,9 +383,274 @@ async function syncBotCommands(env) {
   return !!(a.ok && b.ok);
 }
 
+/* ---------------- ربات: ساخت کانفیگ (همون امکانات و محدودیت‌های پنل) ---------------- */
+// لیست کشورها و پینگ پایه‌ی پنل (Public/index.html → allCountries)
+const BOT_COUNTRIES = [
+  { code: "tr", name: "ترکیه", flag: "🇹🇷", ping: 38, codm: true },
+  { code: "de", name: "آلمان", flag: "🇩🇪", ping: 52, codm: true },
+  { code: "ae", name: "امارات", flag: "🇦🇪", ping: 58, codm: true },
+  { code: "fr", name: "فرانسه", flag: "🇫🇷", ping: 64, codm: true },
+  { code: "jp", name: "ژاپن", flag: "🇯🇵", ping: 45, codm: false },
+  { code: "sa", name: "عربستان", flag: "🇸🇦", ping: 68, codm: true },
+  { code: "gb", name: "انگلیس", flag: "🇬🇧", ping: 61, codm: true },
+  { code: "om", name: "عمان", flag: "🇴🇲", ping: 55, codm: true },
+  { code: "kr", name: "کره", flag: "🇰🇷", ping: 48, codm: false },
+  { code: "us", name: "آمریکا", flag: "🇺🇸", ping: 130, codm: false },
+];
+const BOT_MODES = { ranked: "رنکد", br: "بتل‌رویال", mp: "مالتی‌پلیر" };
+const BOT_ROLES = { attacker: "Attacker", defender: "Defender", support: "Support" };
+// همون گزینه‌های DNS پنل؛ مقدار "" یعنی بدون DNS
+const BOT_DNS = [
+  { label: "الکترو (پیشنهادی CODM)", v: "10.202.10.10, 78.157.42.101" },
+  { label: "Cloudflare Gaming", v: "1.1.1.1, 1.0.0.1" },
+  { label: "Google", v: "8.8.8.8, 8.8.4.4" },
+  { label: "AdGuard", v: "94.140.14.14, 94.140.15.15" },
+  { label: "Quad9", v: "9.9.9.9, 149.112.112.112" },
+  { label: "بدون DNS", v: "" },
+];
+// MTU پنل؛ "" یعنی بدون MTU
+const BOT_MTU = [...MTU_PRESETS, ""];
+const PERIOD_TXT = { day: "امروز", week: "این هفته", month: "این ماه" };
+const CFG_DEFAULT = { r: "", m: "ranked", o: "attacker", d: 0, t: 2, c: "", n: "" };
+const CFG_TTL = 86400000;
+const KB_TEXTS = new Set([...REPLY_KB.keyboard, ...ADMIN_KB.keyboard].flat().map((b) => b.text));
+const SHAMSI_MD = new Intl.DateTimeFormat("en-u-ca-persian-nu-latn", { month: "numeric", day: "numeric", timeZone: "Asia/Tehran" });
+// نام خودکار همون قالب پنل: IMRC-ماه-روز (شمسی)
+function autoName() {
+  const p = SHAMSI_MD.formatToParts(new Date());
+  return `IMRC-${p.find((x) => x.type === "month").value}-${p.find((x) => x.type === "day").value}`;
+}
+// همون قاعده‌ی createConfig: کاربر بدون اشتراک فقط کشور و DNS رایگان داره
+function botLocked(q, kind, value) {
+  if (q.unlock) return false;
+  if (kind === "r") return !q.free_countries.split(",").includes(value);
+  if (kind === "d") return !!value && !FREE_DNS.includes(value);
+  return false;
+}
+const premiumNote = (what, q) => `${what} مخصوص کاربران اشتراکه.\n\n${q.buy_text}`;
+
+async function cfgLoad(db, tgId) {
+  const row = await db.prepare("SELECT draft,awaiting,mid,ts FROM bot_state WHERE tg_id=?").bind(tgId).first();
+  if (!row || Date.now() - row.ts > CFG_TTL) return null;
+  return { d: JSON.parse(row.draft), awaiting: row.awaiting || "", mid: row.mid || 0 };
+}
+async function cfgSave(db, tgId, st) {
+  await db.prepare("INSERT INTO bot_state(tg_id,draft,awaiting,mid,ts) VALUES(?,?,?,?,?) ON CONFLICT(tg_id) DO UPDATE SET draft=excluded.draft, awaiting=excluded.awaiting, mid=excluded.mid, ts=excluded.ts")
+    .bind(tgId, JSON.stringify(st.d), st.awaiting || "", st.mid || 0, Date.now()).run();
+}
+async function cfgClear(db, tgId) {
+  await db.prepare("DELETE FROM bot_state WHERE tg_id=?").bind(tgId).run();
+}
+
+function cfgSummary(d) {
+  const c = BOT_COUNTRIES.find((x) => x.code === d.r);
+  return "⚡ ساخت کانفیگ\n\n" +
+    `🌍 کشور: ${c ? c.flag + " " + c.name : "انتخاب نشده"}\n` +
+    `🎮 حالت: ${BOT_MODES[d.m]}\n` +
+    `🎯 نقش: ${BOT_ROLES[d.o]}\n` +
+    `🌐 DNS: ${BOT_DNS[d.d].label}\n` +
+    `📶 MTU: ${d.c || BOT_MTU[d.t] || "بدون MTU"}\n` +
+    `🏷 نام: ${d.n || "خودکار (IMRC-ماه-روز)"}`;
+}
+
+async function cfgView(db, tgId, st, screen) {
+  const d = st.d;
+  const q = await quotaInfo(db, tgId);
+  const back = [{ text: "⬅️ برگشت", callback_data: "cf:b" }];
+  const grid = (items) => { const rows = []; for (let i = 0; i < items.length; i += 2) rows.push(items.slice(i, i + 2)); return rows; };
+  if (screen === "country") {
+    const items = BOT_COUNTRIES.map((c) => ({
+      text: `${c.flag} ${c.name} ~${c.ping}ms${c.codm ? " 🎯" : ""}${botLocked(q, "r", c.code) ? " 🔒" : ""}`,
+      callback_data: "cf:r:" + c.code,
+    }));
+    return { text: "🌍 کشور رو انتخاب کن\n🎯 = مناسب کالاف · 🔒 = مخصوص اشتراک", reply_markup: { inline_keyboard: [...grid(items), back] } };
+  }
+  if (screen === "mode") {
+    const items = Object.entries(BOT_MODES).map(([k, v]) => ({ text: (d.m === k ? "✅ " : "") + v, callback_data: "cf:m:" + k }));
+    return { text: "🎮 حالت بازی رو انتخاب کن", reply_markup: { inline_keyboard: [...grid(items), back] } };
+  }
+  if (screen === "role") {
+    const items = Object.entries(BOT_ROLES).map(([k, v]) => ({ text: (d.o === k ? "✅ " : "") + v, callback_data: "cf:o:" + k }));
+    return { text: "🎯 نقش رو انتخاب کن", reply_markup: { inline_keyboard: [...grid(items), back] } };
+  }
+  if (screen === "dns") {
+    const items = BOT_DNS.map((x, i) => ({
+      text: (d.d === i ? "✅ " : "") + x.label + (botLocked(q, "d", x.v) ? " 🔒" : ""),
+      callback_data: "cf:d:" + i,
+    }));
+    return { text: "🌐 DNS رو انتخاب کن", reply_markup: { inline_keyboard: [...grid(items), back] } };
+  }
+  if (screen === "mtu") {
+    const items = BOT_MTU.map((v, i) => ({ text: (!d.c && d.t === i ? "✅ " : "") + (v || "بدون MTU"), callback_data: "cf:t:" + i }));
+    items.push({ text: (d.c ? "✅ " : "") + (d.c ? "MTU " + d.c : "✏️ MTU دلخواه"), callback_data: "cf:s:u" });
+    return { text: "📶 MTU رو انتخاب کن\nMTU دلخواه بین ۵۷۶ تا ۱۵۰۰ (برای کاربر بدون اشتراک فقط مقادیر آماده مجازه)", reply_markup: { inline_keyboard: [...grid(items), back] } };
+  }
+  if (screen === "mtuc") {
+    return { text: "📶 عدد MTU دلخواهت رو بفرست (بین ۵۷۶ تا ۱۵۰۰، مثلاً 1300).", reply_markup: { inline_keyboard: [back] } };
+  }
+  if (screen === "name") {
+    return {
+      text: "🏷 اسم دلخواهت رو بفرست.\nهمیشه با IMRC شروع می‌شه و حداکثر ۱۵ کاراکتر داره (مثلاً bob → IMRC-bob).",
+      reply_markup: { inline_keyboard: [[{ text: "🔄 نام خودکار", callback_data: "cf:n:a" }], back] },
+    };
+  }
+  return {
+    text: cfgSummary(d) + "\n\nهر گزینه رو می‌تونی عوض کنی و بعد ✅ بزن.",
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: "🌍 کشور", callback_data: "cf:s:c" }, { text: "🎮 حالت", callback_data: "cf:s:m" }],
+        [{ text: "🎯 نقش", callback_data: "cf:s:o" }, { text: "🌐 DNS", callback_data: "cf:s:d" }],
+        [{ text: "📶 MTU", callback_data: "cf:s:t" }, { text: "🏷 نام", callback_data: "cf:s:n" }],
+        [{ text: "✅ ساخت کانفیگ", callback_data: "cf:go" }],
+        [{ text: "❌ انصراف", callback_data: "cf:x" }],
+      ],
+    },
+  };
+}
+
+// نمایش یک صفحه‌ی فرم: اگه پیام قبلی باشه ویرایشش می‌کنه، وگرنه پیام تازه می‌فرسته
+async function cfgShow(env, db, tgId, chatId, st, screen) {
+  const v = await cfgView(db, tgId, st, screen);
+  let ok = false;
+  if (st.mid) {
+    const r = await tg(env, "editMessageText", { chat_id: chatId, message_id: st.mid, text: v.text, reply_markup: v.reply_markup }).catch(() => null);
+    ok = !!r && (r.ok || /not modified/i.test(r.description || ""));
+  }
+  if (!ok) {
+    const r = await tg(env, "sendMessage", { chat_id: chatId, text: v.text, reply_markup: v.reply_markup }).catch(() => null);
+    st.mid = r && r.ok ? r.result.message_id : 0;
+  }
+  await cfgSave(db, tgId, st);
+}
+
+async function cfgStart(env, db, chatId, tgId) {
+  const st = { d: { ...CFG_DEFAULT }, awaiting: "", mid: 0 };
+  return cfgShow(env, db, tgId, chatId, st, "country");
+}
+
+async function cfgCallback(env, db, cq, data, chatId, answer) {
+  const tgId = String(cq.from.id);
+  const mid = cq.message ? cq.message.message_id : 0;
+  const say = (text) => tg(env, "sendMessage", { chat_id: chatId, text }).catch(() => {});
+  if (data === "cf:x") {
+    await cfgClear(db, tgId);
+    await answer("لغو شد");
+    if (mid) await tg(env, "editMessageText", { chat_id: chatId, message_id: mid, text: "❌ ساخت کانفیگ لغو شد." }).catch(() => {});
+    return;
+  }
+  const st = await cfgLoad(db, tgId);
+  if (!st) return answer("این فرم منقضی شده؛ دوباره /config رو بفرست.");
+  st.mid = mid || st.mid;
+  const [, kind, val = ""] = data.split(":");
+  if (kind === "go") { await answer("در حال ساخت…"); return cfgCreate(env, db, cq, st, chatId); }
+  if (kind === "b") { st.awaiting = ""; await answer(); return cfgShow(env, db, tgId, chatId, st, "settings"); }
+  if (kind === "s") {
+    const screen = { c: "country", m: "mode", o: "role", d: "dns", t: "mtu", n: "name", u: "mtuc" }[val];
+    if (!screen) return answer();
+    st.awaiting = screen === "name" ? "name" : screen === "mtuc" ? "mtu" : "";
+    await answer();
+    return cfgShow(env, db, tgId, chatId, st, screen);
+  }
+  const q = await quotaInfo(db, tgId);
+  if (kind === "r") {
+    const c = BOT_COUNTRIES.find((x) => x.code === val);
+    if (!c) return answer("کشور نامعتبره");
+    if (botLocked(q, "r", c.code)) { await answer("مخصوص اشتراکه"); return say(premiumNote("این کشور", q)); }
+    st.d.r = c.code;
+  } else if (kind === "m") {
+    if (!BOT_MODES[val]) return answer();
+    st.d.m = val;
+  } else if (kind === "o") {
+    if (!BOT_ROLES[val]) return answer();
+    st.d.o = val;
+  } else if (kind === "d") {
+    const i = Number(val);
+    if (!BOT_DNS[i]) return answer();
+    if (botLocked(q, "d", BOT_DNS[i].v)) { await answer("مخصوص اشتراکه"); return say(premiumNote("این DNS", q)); }
+    st.d.d = i;
+  } else if (kind === "t") {
+    const i = Number(val);
+    if (!(i >= 0 && i < BOT_MTU.length)) return answer();
+    st.d.t = i;
+    st.d.c = "";
+  } else if (kind === "n") {
+    if (val !== "a") return answer();
+    st.d.n = "";
+  } else {
+    return answer();
+  }
+  st.awaiting = "";
+  await answer();
+  return cfgShow(env, db, tgId, chatId, st, "settings");
+}
+
+// ارسال فایل .conf به‌صورت سند تلگرام (multipart)
+async function tgDocument(env, chatId, filename, content, caption) {
+  const fd = new FormData();
+  fd.append("chat_id", String(chatId));
+  if (caption) fd.append("caption", caption.slice(0, 1000));
+  fd.append("document", new Blob([content], { type: "application/octet-stream" }), filename);
+  const r = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/sendDocument`, { method: "POST", body: fd });
+  return r.json();
+}
+
+async function cfgCreate(env, db, cq, st, chatId) {
+  const from = cq.from, tgId = String(from.id), d = st.d;
+  const say = (text) => tg(env, "sendMessage", { chat_id: chatId, text }).catch(() => {});
+  if (!d.r) return say("اول کشور رو انتخاب کن.");
+  const sess = { tg_id: tgId, name: [from.first_name, from.last_name].filter(Boolean).join(" "), username: from.username || "" };
+  // همون مسیر و همون کنترل‌های پنل (عضویت، نرخ، سهمیه، پلن، ثبت اتمیک)
+  const res = await issueConfig(env, sess, { region: d.r, dns: BOT_DNS[d.d].v, mtu: d.c || BOT_MTU[d.t] || "", mode: d.m, role: d.o, name: d.n || autoName() }, { cf: null, ua: "telegram-bot", ip: "tg:" + tgId });
+  if (res.status !== 200) return say(res.body.message || "⚠️ " + (res.body.error || "خطا در ساخت کانفیگ"));
+  const b = res.body;
+  const c = BOT_COUNTRIES.find((x) => x.code === d.r);
+  const caption = `✅ کانفیگ ساخته شد: ${b.name}\n🌍 ${c ? c.flag + " " + c.name : d.r.toUpperCase()} • 🎮 ${BOT_MODES[d.m]} • 🎯 ${BOT_ROLES[d.o]}\n🧮 ${fa(b.used)} از ${fa(b.limit)} کانفیگ ${PERIOD_TXT[b.period] || ""} • باقی‌مانده ${fa(b.remaining)}`;
+  await tgDocument(env, chatId, `${b.name}_${d.r}.conf`, b.config, caption).catch(() => null);
+  await cfgClear(db, tgId);
+  if (st.mid) await tg(env, "editMessageText", { chat_id: chatId, message_id: st.mid, text: "✅ کانفیگ ساخته شد و فرستاده شد.\nبرای ساخت دوباره /config رو بفرست." }).catch(() => {});
+}
+
+// کانفیگ‌های اخیر همین کاربر (همون منبع تاریخچه‌ی پنل)
+async function sendMyConfigs(env, db, chatId, tgId) {
+  const vid = "tg" + tgId.replace(/[^0-9]/g, "");
+  const rows = (await db.prepare("SELECT ts,region,mode,name FROM events WHERE vid=? AND type='config' ORDER BY ts DESC, id DESC LIMIT 10").bind(vid).all()).results || [];
+  if (!rows.length) return tg(env, "sendMessage", { chat_id: chatId, text: "هنوز کانفیگی نساختی. از «⚡ ساخت کانفیگ» شروع کن.", reply_markup: MAIN_KB }).catch(() => {});
+  const lines = rows.map((r, i) => {
+    const c = BOT_COUNTRIES.find((x) => x.code === r.region);
+    const day = new Date(r.ts).toLocaleDateString("fa-IR", { timeZone: "Asia/Tehran" });
+    return `${fa(i + 1)}. ${r.name || "-"} — ${c ? c.flag + " " + c.name : String(r.region || "").toUpperCase()} — ${BOT_MODES[r.mode] || r.mode} — ${day}`;
+  });
+  return tg(env, "sendMessage", { chat_id: chatId, text: `📂 کانفیگ‌های تو (آخرین ${fa(rows.length)}):\n\n${lines.join("\n")}`, reply_markup: MAIN_KB }).catch(() => {});
+}
+
 async function handleText(env, db, msg, text, origin) {
   const chatId = msg.chat.id, from = msg.from, tgId = String(from.id);
   const reply = (t, extra = {}) => tg(env, "sendMessage", { chat_id: chatId, text: t, ...extra }).catch(() => {});
+  // فرم ساخت کانفیگ: اگه منتظر اسم باشیم و پیام عادی باشه، همون پیام اسمه؛ دستور یا دکمه یعنی فرم رو ول کرده
+  if (text.startsWith("/") || KB_TEXTS.has(text)) {
+    await db.prepare("UPDATE bot_state SET awaiting='' WHERE tg_id=? AND awaiting!=''").bind(tgId).run().catch(() => {});
+  } else if (text) {
+    const cst = await cfgLoad(db, tgId).catch(() => null);
+    if (cst && cst.awaiting === "name") {
+      const n = imrcName(text);
+      cst.d.n = n === "IMRC" ? "" : n;
+      cst.awaiting = "";
+      return cfgShow(env, db, tgId, chatId, cst, "settings");
+    }
+    if (cst && cst.awaiting === "mtu") {
+      const t = text.trim();
+      const n = Number(t);
+      if (!/^\d+$/.test(t) || n < 576 || n > 1500) return reply("⚠️ عدد MTU باید بین ۵۷۶ تا ۱۵۰۰ باشه. دوباره بفرست.");
+      cst.awaiting = "";
+      const q = await quotaInfo(db, tgId);
+      if (!q.unlock && !MTU_PRESETS.includes(String(n))) {
+        await reply(premiumNote("این MTU دلخواه", q));
+        return cfgShow(env, db, tgId, chatId, cst, "settings");
+      }
+      cst.d.c = String(n);
+      return cfgShow(env, db, tgId, chatId, cst, "settings");
+    }
+  }
   // دکمه‌های کیبورد ثابت → همان دستورها
   if (BUTTON_CMDS[text]) text = BUTTON_CMDS[text];
   if (text === "🎟 کد تخفیف") return reply("برای ثبت کد تخفیف، این‌طور بفرست:\n/code کد_تخفیف");
@@ -399,6 +671,8 @@ async function handleText(env, db, msg, text, origin) {
   }
   if (/^\/menu(@\S+)?(\s|$)/i.test(text)) return sendMainMenu(env, db, chatId, isAdmin(env, from.id), "🏠 منوی اصلی");
   if (/^\/plans(\s|$)/.test(text)) return sendPlans(env, db, chatId);
+  if (/^\/config(@\S+)?(\s|$)/i.test(text)) return cfgStart(env, db, chatId, tgId);
+  if (/^\/configs(@\S+)?(\s|$)/i.test(text)) return sendMyConfigs(env, db, chatId, tgId);
   if (/^\/invite(\s|$)/.test(text)) return sendInvite(env, db, chatId, tgId);
   m = text.match(/^\/code(?:\s+(\S+))?$/i);
   if (m) return applyCode(env, db, chatId, tgId, m[1] || "");
@@ -451,6 +725,8 @@ async function handleCallback(env, db, cq, origin) {
   const dec = data.match(/^(rc|rj):(\d{1,12})(?::([a-z0-9_]{1,16}))?$/);
   if (dec) return adminDecide(env, db, cq, dec[1], Number(dec[2]), dec[3] || "", answer);
   if (data === "menu:me") { await answer(); return sendMyStatus(env, db, chatId, String(cq.from.id)); }
+  if (data === "menu:config") { await answer(); return cfgStart(env, db, chatId, String(cq.from.id)); }
+  if (data.startsWith("cf:")) return cfgCallback(env, db, cq, data, chatId, answer);
   const tkl = data.match(/^tk:l:([oca])$/);
   if (tkl) {
     if (!isAdmin(env, cq.from.id)) return answer("⛔ فقط ادمین");
@@ -610,6 +886,7 @@ async function sendMyStatus(env, db, chatId, tgId) {
   const sub = await db.prepare("SELECT until FROM subs WHERE tg_id=?").bind(tgId).first();
   const w = await db.prepare("SELECT balance FROM wallet WHERE tg_id=?").bind(tgId).first();
   const open = await db.prepare("SELECT COUNT(*) n FROM tickets WHERE tg_id=? AND status='open'").bind(tgId).first();
+  const q = await quotaInfo(db, tgId);
   let subLine = "❌ اشتراک فعال نداری. از «💳 خرید اشتراک» شروع کن.";
   if (sub && sub.until > now) {
     const days = Math.max(1, Math.ceil((sub.until - now) / 86400000));
@@ -617,7 +894,7 @@ async function sendMyStatus(env, db, chatId, tgId) {
   }
   return tg(env, "sendMessage", {
     chat_id: chatId,
-    text: `👤 حساب من\n\n${subLine}\n🎁 اعتبار دعوت: ${fa(w ? w.balance : 0)} تومان\n🎫 تیکت‌های باز: ${fa(open ? open.n : 0)}`,
+    text: `👤 حساب من\n\n${subLine}\n🎁 اعتبار دعوت: ${fa(w ? w.balance : 0)} تومان\n🎫 تیکت‌های باز: ${fa(open ? open.n : 0)}\n🧮 کانفیگ ${PERIOD_TXT[q.period] || "امروز"}: ${fa(q.used)} از ${fa(q.limit)}`,
     reply_markup: MAIN_KB,
   }).catch(() => {});
 }
@@ -990,6 +1267,13 @@ async function createConfig(request, env) {
   if (!sess) return json({ error: "login" }, 401);
   let b;
   try { b = JSON.parse(await request.text()); } catch { return json({ error: "bad" }, 400); }
+  const r = await issueConfig(env, sess, b, { cf: request.cf, ua: request.headers.get("User-Agent") || "", ip: request.headers.get("CF-Connecting-IP") || "" });
+  return json(r.body, r.status);
+}
+
+// هسته‌ی ساخت کانفیگ؛ پنل و ربات هر دو از اینجا رد می‌شن، پس همه‌ی محدودیت‌ها یکی‌اند.
+async function issueConfig(env, sess, b, meta) {
+  const json = (body, status = 200) => ({ status, body });
   const region = String(b.region || "").toLowerCase();
   if (!/^[a-z]{2}$/.test(region)) return json({ error: "کشور نامعتبر است" }, 400);
   const dns = b.dns ? String(b.dns) : "";
@@ -1023,8 +1307,8 @@ async function createConfig(request, env) {
   }
 
   const vid = "tg" + String(sess.tg_id).replace(/[^0-9]/g, "");
-  const ua = request.headers.get("User-Agent") || "";
-  const ipHash = await sha((request.headers.get("CF-Connecting-IP") || "") + (env.ADMIN_PASSWORD || "salt"));
+  const ua = meta.ua || "";
+  const ipHash = await sha((meta.ip || "") + (env.ADMIN_PASSWORD || "salt"));
   await db.batch([
     db.prepare(
       `INSERT INTO visitors(vid,first_seen,last_seen,country,city,device,ip_hash,visits,configs,actions,last_name,tg_id,tg_name,tg_username)
@@ -1032,13 +1316,13 @@ async function createConfig(request, env) {
        ON CONFLICT(vid) DO UPDATE SET last_seen=excluded.last_seen, configs=configs+1,
          last_name=COALESCE(excluded.last_name,last_name),
          tg_id=excluded.tg_id, tg_name=excluded.tg_name, tg_username=excluded.tg_username`
-    ).bind(vid, now, now, (request.cf && request.cf.country) || "", (request.cf && request.cf.city) || "", device(ua), ipHash,
+    ).bind(vid, now, now, (meta.cf && meta.cf.country) || "", (meta.cf && meta.cf.city) || "", device(ua), ipHash,
       name || null, String(sess.tg_id), sess.name || "", sess.username || ""),
     db.prepare("INSERT INTO events(ts,vid,type,name,region,mode,role,detail) VALUES(?,?,?,?,?,?,?,?)")
       .bind(now, vid, "config", name, region, mode, role, ""),
   ]);
   const config = buildConfig({ region, dns, mtu, mode, role });
-  return json({ config, used: q.used + 1, limit: q.limit, remaining: Math.max(0, q.limit - q.used - 1), period: q.period, sub: q.sub, sub_until: q.sub_until, custom: q.custom, unlock: q.unlock });
+  return json({ config, name, region, mode, role, used: q.used + 1, limit: q.limit, remaining: Math.max(0, q.limit - q.used - 1), period: q.period, sub: q.sub, sub_until: q.sub_until, custom: q.custom, unlock: q.unlock });
 }
 
 /* ---------------- /api/track ---------------- */

@@ -387,6 +387,25 @@ async function syncBotCommands(env) {
   return !!(a.ok && b.ok);
 }
 
+// پروفایل ربات: توضیح کامل (قبل از /start نمایش داده می‌شه، ≤۵۱۲ کاراکتر) و توضیح کوتاه (در پروفایل، ≤۱۲۰ کاراکتر)
+const BOT_DESCRIPTION = [
+  "🎮 IMRC؛ ساخت کانفیگ گیمینگ، ساده و سریع",
+  "",
+  "⚡ ساخت کانفیگ با همون امکانات پنل: کشور، حالت بازی، نقش، DNS و MTU",
+  "📂 دیدن کانفیگ‌های قبلی و سهمیه‌ی همین دوره",
+  "💳 خرید اشتراک برای سهمیه‌ی بیشتر",
+  "🎁 دعوت دوستان و گرفتن روز رایگان",
+  "🎫 پشتیبانی مستقیم همین‌جا",
+  "",
+  "برای شروع /start رو بزن 👇",
+].join("\n");
+const BOT_SHORT_DESCRIPTION = "🎮 ساخت کانفیگ گیمینگ با IMRC؛ همه‌چی همین‌جاست ⚡";
+async function syncBotProfile(env) {
+  const a = await tg(env, "setMyDescription", { description: BOT_DESCRIPTION }).catch(() => ({ ok: false }));
+  const b = await tg(env, "setMyShortDescription", { short_description: BOT_SHORT_DESCRIPTION }).catch(() => ({ ok: false }));
+  return !!(a.ok && b.ok);
+}
+
 /* ---------------- ربات: ساخت کانفیگ (همون امکانات و محدودیت‌های پنل) ---------------- */
 // لیست کشورها و پینگ پایه‌ی پنل (Public/index.html → allCountries)
 const BOT_COUNTRIES = [
@@ -1655,7 +1674,8 @@ async function adminWebhook(request, env) {
     drop_pending_updates: true,
   });
   const commands = await syncBotCommands(env);
-  return json({ ok: !!r.ok, bot: me.result.username, description: r.description || "", commands }, r.ok ? 200 : 400);
+  const profile = await syncBotProfile(env);
+  return json({ ok: !!r.ok, bot: me.result.username, description: r.description || "", commands, profile }, r.ok ? 200 : 400);
 }
 
 /* ---------------- پشتیبانی (تیکت) ---------------- */

@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="description" content="IMRC — پنل ساخت کانفیگ و سایت‌های گیمینگ"/>
+<meta name="theme-color" content="#0a0a08"/>
+<title>IMRC • فروشگاه</title>
+<style>
+:root{
+  --bg:#0a0a08; --bg2:#100e09; --card:#16130c; --card2:#0e0c07;
+  --line:#3a2f12; --line2:#5c4a1b;
+  --gold:#f5c542; --gold2:#c9961a; --gold3:#ffe38a;
+  --tx:#f7f1dc; --mut:#b9ab7e;
+  --grad:linear-gradient(90deg,#ffe38a,#f5c542 45%,#c9961a);
+}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%}
+body{
+  background:
+    radial-gradient(900px 500px at 85% -10%,rgba(245,197,66,.14),transparent 60%),
+    radial-gradient(700px 400px at -10% 30%,rgba(201,150,26,.10),transparent 60%),
+    var(--bg);
+  color:var(--tx);
+  font-family:"Vazirmatn","Tahoma","Segoe UI",system-ui,sans-serif;
+  line-height:1.7;
+}
+a{color:inherit}
+.gold{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+
+/* هدر: دو گزینه‌ی بالا + زبان */
+.top{
+  position:sticky;top:0;z-index:20;
+  background:rgba(10,10,8,.85);backdrop-filter:blur(10px);
+  border-bottom:1px solid var(--line);
+}
+.top-in{
+  max-width:1120px;margin:0 auto;padding:12px 18px;
+  display:flex;align-items:center;gap:14px;flex-wrap:wrap;justify-content:space-between;
+}
+.brand{font-weight:900;font-size:22px;letter-spacing:1px;text-decoration:none}
+.tabs{display:flex;gap:6px;background:var(--card2);border:1px solid var(--line);border-radius:999px;padding:4px}
+.tab{
+  text-decoration:none;color:var(--mut);font-weight:700;font-size:14px;
+  padding:8px 16px;border-radius:999px;transition:.2s;white-space:nowrap;
+}
+.tab:hover{color:var(--gold3)}
+.tab[aria-current="page"]{background:var(--grad);color:#0a0a08}
+.lang{
+  background:transparent;color:var(--gold);border:1px solid var(--line2);
+  border-radius:999px;padding:7px 14px;font:inherit;font-weight:700;cursor:pointer;
+}
+.lang:hover{background:rgba(245,197,66,.1)}
+
+/* بخش معرفی */
+.hero{max-width:1120px;margin:0 auto;padding:64px 18px 36px;text-align:center}
+.hero h1{font-size:clamp(30px,5vw,52px);margin:0 0 12px;font-weight:900;line-height:1.3}
+.hero p{color:var(--mut);max-width:620px;margin:0 auto 26px;font-size:16px}
+.cta{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+.btn{
+  display:inline-block;text-decoration:none;font:inherit;font-weight:800;
+  padding:12px 22px;border-radius:12px;border:1px solid var(--gold2);cursor:pointer;transition:.2s;
+}
+.btn-gold{background:var(--grad);color:#0a0a08;border-color:transparent}
+.btn-gold:hover{box-shadow:0 8px 26px rgba(245,197,66,.35);transform:translateY(-1px)}
+.btn-ghost{background:transparent;color:var(--gold)}
+.btn-ghost:hover{background:rgba(245,197,66,.08)}
+
+/* کاتالوگ */
+.catalog{max-width:1120px;margin:0 auto;padding:18px 18px 56px}
+.bar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:18px}
+.bar h2{margin:0;font-size:24px;font-weight:900}
+.chips{display:flex;gap:8px;flex-wrap:wrap}
+.chip{
+  background:var(--card2);color:var(--mut);border:1px solid var(--line);
+  border-radius:999px;padding:7px 14px;font:inherit;font-size:14px;font-weight:700;cursor:pointer;transition:.2s;
+}
+.chip[aria-pressed="true"]{background:var(--grad);color:#0a0a08;border-color:transparent}
+
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:18px}
+.card{
+  position:relative;overflow:hidden;
+  background:linear-gradient(180deg,var(--card),var(--card2));
+  border:1px solid var(--line);border-radius:18px;padding:22px;
+  display:flex;flex-direction:column;gap:10px;transition:.25s;
+}
+.card::before{
+  content:"";position:absolute;inset-inline:0;top:0;height:3px;background:var(--grad);opacity:.9;
+}
+.card:hover{transform:translateY(-4px);border-color:var(--line2);box-shadow:0 14px 34px rgba(245,197,66,.14)}
+.badge{
+  align-self:flex-start;font-size:12px;font-weight:800;letter-spacing:.3px;
+  color:var(--gold3);border:1px solid var(--line2);border-radius:999px;padding:2px 10px;
+}
+.card h3{margin:2px 0 0;font-size:19px;font-weight:900;color:var(--tx)}
+.card p{margin:0;color:var(--mut);font-size:14.5px;flex:1}
+.tags{display:flex;gap:6px;flex-wrap:wrap}
+.tag{font-size:12px;color:var(--mut);background:rgba(245,197,66,.07);border-radius:6px;padding:2px 8px}
+.price{color:var(--gold);font-weight:800;font-size:15px}
+.actions{display:flex;gap:8px;margin-top:6px;flex-wrap:wrap}
+.actions .btn{padding:9px 14px;font-size:14px}
+.empty{grid-column:1/-1;text-align:center;color:var(--mut);padding:40px 0}
+
+footer{border-top:1px solid var(--line);color:var(--mut);text-align:center;padding:22px 18px;font-size:14px}
+footer a{color:var(--gold)}
+
+@media (max-width:560px){
+  .hero{padding-top:44px}
+  .tab{padding:7px 12px;font-size:13px}
+}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="top-in">
+    <a class="brand gold" href="/store.html">IMRC</a>
+    <nav class="tabs" aria-label="بخش‌های سایت">
+      <a class="tab" href="/store.html" aria-current="page" data-i18n="tabStore">🛒 فروشگاه</a>
+      <a class="tab" href="/" data-i18n="tabPanel">⚡ پنل ساخت کانفیگ</a>
+    </nav>
+    <button class="lang" id="langBtn" type="button" aria-label="change language">EN</button>
+  </div>
+</header>
+
+<section class="hero">
+  <h1><span class="gold" data-i18n="heroTitle">پنل ساخت کانفیگ و سایت‌های گیمینگ</span></h1>
+  <p data-i18n="heroText">هر چی ساختیم اینجاست: پنل‌های ساخت کانفیگ و سایت‌های گیمینگ. یکی رو انتخاب کن و جزئیاتش رو ببین.</p>
+  <div class="cta">
+    <a class="btn btn-gold" href="#catalog" data-i18n="ctaShop">مشاهده محصولات</a>
+    <a class="btn btn-ghost" id="ctaContact" href="#" target="_blank" rel="noopener" data-i18n="ctaContact">پشتیبانی در تلگرام</a>
+  </div>
+</section>
+
+<main class="catalog" id="catalog">
+  <div class="bar">
+    <h2 data-i18n="catTitle">محصولات</h2>
+    <div class="chips" id="chips" role="group" aria-label="فیلتر"></div>
+  </div>
+  <div class="grid" id="grid"></div>
+</main>
+
+<footer>
+  <span data-i18n="footer">© IMRC</span> ·
+  <a id="footContact" href="#" target="_blank" rel="noopener" data-i18n="footContact">تلگرام</a>
+</footer>
+
+<script src="/store-data.js"></script>
+<script>
+(function(){
+  var LANG_KEY = "IMRC_store_lang";
+  var I18N = {
+    fa: {
+      tabStore:"🛒 فروشگاه", tabPanel:"⚡ پنل ساخت کانفیگ",
+      heroTitle:"پنل ساخت کانفیگ و سایت‌های گیمینگ",
+      heroText:"هر چی ساختیم اینجاست: پنل‌های ساخت کانفیگ و سایت‌های گیمینگ. یکی رو انتخاب کن و جزئیاتش رو ببین.",
+      ctaShop:"مشاهده محصولات", ctaContact:"پشتیبانی در تلگرام",
+      catTitle:"محصولات",
+      fAll:"همه", fPanel:"پنل ساخت کانفیگ", fGaming:"سایت گیمینگ",
+      view:"مشاهده", order:"💬 سفارش / پرسش", empty:"محصولی در این دسته نیست.",
+      typePanel:"پنل", typeGaming:"گیمینگ",
+      footer:"© IMRC", footContact:"تلگرام",
+      langBtn:"EN"
+    },
+    en: {
+      tabStore:"🛒 Store", tabPanel:"⚡ Config Builder",
+      heroTitle:"Config builder panels & gaming sites",
+      heroText:"Everything we build is here: config builder panels and gaming sites. Pick one and check the details.",
+      ctaShop:"Browse products", ctaContact:"Contact on Telegram",
+      catTitle:"Products",
+      fAll:"All", fPanel:"Config builder", fGaming:"Gaming site",
+      view:"View", order:"💬 Order / ask", empty:"No products in this category.",
+      typePanel:"Panel", typeGaming:"Gaming",
+      footer:"© IMRC", footContact:"Telegram",
+      langBtn:"فا"
+    }
+  };
+  var FILTERS = ["all","panel","gaming"];
+  var lang = "fa", filter = "all";
+  try { lang = localStorage.getItem(LANG_KEY) === "en" ? "en" : "fa"; } catch(e) {}
+
+  function t(k){ return (I18N[lang] && I18N[lang][k]) || I18N.fa[k] || k; }
+  function pick(obj){ return obj[lang] || obj.fa || ""; }
+  function el(tag, cls, text){
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+
+  function applyStatic(){
+    document.documentElement.lang = lang;
+    document.documentElement.dir = lang === "fa" ? "rtl" : "ltr";
+    document.querySelectorAll("[data-i18n]").forEach(function(n){ n.textContent = t(n.getAttribute("data-i18n")); });
+    document.getElementById("langBtn").textContent = t("langBtn");
+    var contact = window.STORE_CONTACT || "#";
+    document.getElementById("ctaContact").href = contact;
+    document.getElementById("footContact").href = contact;
+    document.title = lang === "fa" ? "IMRC • فروشگاه" : "IMRC • Store";
+  }
+
+  function renderChips(){
+    var box = document.getElementById("chips");
+    box.textContent = "";
+    var labels = { all: t("fAll"), panel: t("fPanel"), gaming: t("fGaming") };
+    FILTERS.forEach(function(f){
+      var b = el("button", "chip", labels[f]);
+      b.type = "button";
+      b.setAttribute("aria-pressed", String(f === filter));
+      b.setAttribute("data-filter", f);
+      b.addEventListener("click", function(){ filter = f; renderAll(); });
+      box.appendChild(b);
+    });
+  }
+
+  function productCard(p){
+    var card = el("article", "card");
+    card.appendChild(el("span", "badge", p.type === "panel" ? t("typePanel") : t("typeGaming")));
+    card.appendChild(el("h3", "", (p[lang] || p.fa).title));
+    card.appendChild(el("p", "", (p[lang] || p.fa).desc));
+
+    var price = pick(p.price || {});
+    if (price) card.appendChild(el("div", "price", price));
+
+    if (p.tags && p.tags.length){
+      var tags = el("div", "tags");
+      p.tags.forEach(function(s){ tags.appendChild(el("span", "tag", s)); });
+      card.appendChild(tags);
+    }
+
+    var actions = el("div", "actions");
+    if (p.link){
+      var view = el("a", "btn btn-ghost", t("view"));
+      view.href = p.link;
+      actions.appendChild(view);
+    }
+    var order = el("a", "btn btn-gold", t("order"));
+    order.href = window.STORE_CONTACT || "#";
+    order.target = "_blank";
+    order.rel = "noopener";
+    actions.appendChild(order);
+    card.appendChild(actions);
+    return card;
+  }
+
+  function renderCards(){
+    var grid = document.getElementById("grid");
+    grid.textContent = "";
+    var list = (window.STORE_PRODUCTS || []).filter(function(p){
+      return filter === "all" || p.type === filter;
+    });
+    if (!list.length){
+      grid.appendChild(el("div", "empty", t("empty")));
+      return;
+    }
+    list.forEach(function(p){ grid.appendChild(productCard(p)); });
+  }
+
+  function renderAll(){ renderChips(); renderCards(); }
+
+  document.getElementById("langBtn").addEventListener("click", function(){
+    lang = lang === "fa" ? "en" : "fa";
+    try { localStorage.setItem(LANG_KEY, lang); } catch(e) {}
+    applyStatic(); renderAll();
+  });
+
+  applyStatic();
+  renderAll();
+})();
+</script>
+</body>
+</html>
